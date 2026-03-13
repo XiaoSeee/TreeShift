@@ -87,17 +87,27 @@ type RepositorySummary struct {
 	PendingCleanupCount int    `json:"pendingCleanupCount"`
 }
 
+// WorktreeChangeSummary 描述单个 worktree 的轻量改动摘要。
+//
+// ChangedCount 统计新增、修改、重命名、未跟踪等“正向改动”文件数，
+// DeletedCount 统计删除类文件数。该结构只用于界面提示，不替代完整 diff。
+type WorktreeChangeSummary struct {
+	ChangedCount int `json:"changedCount"`
+	DeletedCount int `json:"deletedCount"`
+}
+
 // WorktreeInfo 描述单个 worktree 的展示状态。
 //
 // Status 和 StatusMessage 同时覆盖 Git 正常 worktree 与“待清理”虚拟项。
 type WorktreeInfo struct {
-	Path          string `json:"path"`
-	Branch        string `json:"branch"`
-	Head          string `json:"head"`
-	IsMain        bool   `json:"isMain"`
-	IsDetached    bool   `json:"isDetached"`
-	Status        string `json:"status"`
-	StatusMessage string `json:"statusMessage"`
+	Path          string                `json:"path"`
+	Branch        string                `json:"branch"`
+	Head          string                `json:"head"`
+	IsMain        bool                  `json:"isMain"`
+	IsDetached    bool                  `json:"isDetached"`
+	Status        string                `json:"status"`
+	StatusMessage string                `json:"statusMessage"`
+	ChangeSummary WorktreeChangeSummary `json:"changeSummary"`
 }
 
 // RepositoryView 是主界面渲染当前仓库所需的完整数据。

@@ -326,7 +326,19 @@ func (s *Service) listWorktreesByPath(path string) ([]model.WorktreeInfo, error)
 		return nil, err
 	}
 
-	return ParseWorktreePorcelain(output), nil
+	worktrees := ParseWorktreePorcelain(output)
+	for index := range worktrees {
+		if worktrees[index].Status != model.WorktreeStatusNormal {
+			continue
+		}
+
+		changeSummary, summaryErr := s.readWorktreeChangeSummary(worktrees[index].Path)
+		if summaryErr == nil {
+			worktrees[index].ChangeSummary = changeSummary
+		}
+	}
+
+	return worktrees, nil
 }
 
 // runGitSingleValue 执行只返回单行结果的 Git 命令。
@@ -337,6 +349,19 @@ func (s *Service) runGitSingleValue(path string, args ...string) (string, error)
 	}
 
 	return strings.TrimSpace(output), nil
+}
+
+// readWorktreeChangeSummary 读取单个 worktree 的轻量改动摘要。
+//
+// 这里使用 `git status --porcelain` 统计文件级变化数量，
+// 只为界面提供“+N|-M”提示，不追求替代完整 diff 视图。
+func (s *Service) readWorktreeChangeSummary(path string) (model.WorktreeChangeSummary, error) {
+	output, err := s.runGit(path, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return model.WorktreeChangeSummary{}, err
+	}
+
+	return ParseWorktreeChangeSummary(output), nil
 }
 
 // runGit 执行 Git 命令并返回合并后的输出文本。
@@ -358,6 +383,32 @@ func (s *Service) runGit(path string, args ...string) (string, error) {
 	}
 
 	return trimmed, nil
+}
+
+// ParseWorktreeChangeSummary 解析 `git status --porcelain` 输出为轻量摘要。
+//
+// 解析规则刻意保持简单：只区分“删除类文件”和“其他改动文件”两组，
+// 这样前端就能稳定展示 `+N|-M`，同时避免把信息量做得过重。
+func ParseWorktreeChangeSummary(output string) model.WorktreeChangeSummary {
+	summary := model.WorktreeChangeSummary{}
+	for _, line := range splitLines(output) {
+		if len(line) < 2 {
+			continue
+		}
+
+		statusCode := line[:2]
+		if statusCode == "  " {
+			continue
+		}
+
+		if strings.Contains(statusCode, "D") {
+			summary.DeletedCount++
+		} else {
+			summary.ChangedCount++
+		}
+	}
+
+	return summary
 }
 
 // splitLines 把命令输出按行拆分，同时兼容 Windows 换行格式。

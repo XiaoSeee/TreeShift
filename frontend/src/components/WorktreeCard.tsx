@@ -14,6 +14,13 @@ interface WorktreeCardProps {
 }
 
 /**
+ * hasWorktreeChanges 判断当前卡片是否需要展示改动摘要。
+ */
+function hasWorktreeChanges(worktree: WorktreeInfo): boolean {
+  return worktree.changeSummary.changedCount > 0 || worktree.changeSummary.deletedCount > 0;
+}
+
+/**
  * WorktreeCard 渲染单个 worktree 的路径、分支、状态和快捷动作。
  */
 export function WorktreeCard({
@@ -27,6 +34,7 @@ export function WorktreeCard({
 }: WorktreeCardProps) {
   const isUnavailable = worktree.status !== "normal";
   const canDelete = !worktree.isMain && worktree.status === "normal";
+  const shouldShowChangeSummary = worktree.status === "normal" && hasWorktreeChanges(worktree);
   const statusTone =
     worktree.status === "pending_cleanup"
       ? "bg-amber-100 text-amber-900"
@@ -57,18 +65,30 @@ export function WorktreeCard({
     <article className="glass-panel overflow-hidden">
       <div className="border-b border-stone-200/80 px-3 py-3">
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="tag bg-stone-900 px-2 py-0.5 text-[10px] text-white">{worktree.branch || "未识别分支"}</span>
-            <span className={`tag px-2 py-0.5 text-[10px] ${statusTone}`}>
-              {worktree.status === "pending_cleanup"
-                ? "待清理"
-                : worktree.status === "missing"
-                  ? "目录缺失"
-                  : "正常"}
-            </span>
-            {worktree.isMain ? <span className="tag bg-ember-100 px-2 py-0.5 text-[10px] text-ember-800">主工作区</span> : null}
-            {worktree.isDetached ? <span className="tag bg-stone-200 px-2 py-0.5 text-[10px] text-stone-700">Detached</span> : null}
-            <span className="tag bg-stone-100 px-2 py-0.5 text-[10px] text-stone-700">HEAD {worktree.head ? worktree.head.slice(0, 8) : "N/A"}</span>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="tag bg-stone-900 px-2 py-0.5 text-[10px] text-white">{worktree.branch || "未识别分支"}</span>
+              <span className={`tag px-2 py-0.5 text-[10px] ${statusTone}`}>
+                {worktree.status === "pending_cleanup"
+                  ? "待清理"
+                  : worktree.status === "missing"
+                    ? "目录缺失"
+                    : "正常"}
+              </span>
+              {worktree.isMain ? <span className="tag bg-ember-100 px-2 py-0.5 text-[10px] text-ember-800">主工作区</span> : null}
+              {worktree.isDetached ? <span className="tag bg-stone-200 px-2 py-0.5 text-[10px] text-stone-700">Detached</span> : null}
+              <span className="tag bg-stone-100 px-2 py-0.5 text-[10px] text-stone-700">HEAD {worktree.head ? worktree.head.slice(0, 8) : "N/A"}</span>
+            </div>
+            {shouldShowChangeSummary ? (
+              <div
+                className="worktree-change-pill shrink-0"
+                title={`当前目录改动提示：+${worktree.changeSummary.changedCount}，删除：-${worktree.changeSummary.deletedCount}`}
+              >
+                <span className="worktree-change-pill__plus">+{worktree.changeSummary.changedCount}</span>
+                <span className="worktree-change-pill__divider">|</span>
+                <span className="worktree-change-pill__minus">-{worktree.changeSummary.deletedCount}</span>
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-stone-200/80 bg-white/55 px-3 py-2">
             <div className="min-w-0 flex-1">

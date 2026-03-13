@@ -1,5 +1,6 @@
-import type { ChangeEvent, DragEvent, FormEvent } from "react";
+import type { CSSProperties, ChangeEvent, FormEvent } from "react";
 import { useEffect, useState } from "react";
+import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 
 import { EnvironmentStrip } from "./components/EnvironmentStrip";
 import { Modal } from "./components/Modal";
@@ -34,6 +35,21 @@ interface NoticeState {
   tone: NoticeTone;
   message: string;
 }
+
+/**
+ * noticeAutoDismissDelayMs 定义顶部提示条的自动消失时长。
+ */
+const noticeAutoDismissDelayMs = 5000;
+
+/**
+ * wailsDropTargetStyle 为 Wails 原生文件拖拽提供命中目标标记。
+ *
+ * Wails 会通过该 CSS 自定义属性识别可接收文件拖拽的区域，
+ * 并在拖入时自动为目标元素追加高亮类名。
+ */
+const wailsDropTargetStyle = {
+  "--wails-drop-target": "drop",
+} as CSSProperties;
 
 /**
  * BindDialogState 描述仓库绑定弹窗状态。
@@ -173,9 +189,8 @@ function toErrorMessage(error: unknown): string {
 /**
  * extractPathFromDrop 从拖拽事件中尽量解析目录路径。
  */
-function extractPathFromDrop(event: DragEvent<HTMLDivElement>): string {
-  const file = event.dataTransfer.files?.[0] as (File & { path?: string }) | undefined;
-  const candidate = file?.path ?? event.dataTransfer.getData("text/plain");
+function extractPathFromDroppedFiles(paths: string[]): string {
+  const candidate = paths[0] ?? "";
   return candidate.trim().replace(/^"+|"+$/g, "");
 }
 
@@ -201,6 +216,65 @@ export default function App() {
     void reloadWorkspace();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * registerNativeFileDrop 订阅 Wails 原生文件拖拽事件。
+   *
+   * WebView2 普通 DOM 拖拽无法稳定拿到系统目录的绝对路径，
+   * 因此这里统一改用 Wails 提供的文件拖拽通道。
+   */
+  useEffect(() => {
+    const runtimeBridge = window as Window & {
+      runtime?: {
+        OnFileDrop?: typeof OnFileDrop;
+        OnFileDropOff?: typeof OnFileDropOff;
+      };
+    };
+
+    if (typeof runtimeBridge.runtime?.OnFileDrop !== "function") {
+      return;
+    }
+
+    OnFileDrop((_x, _y, paths) => {
+      const droppedPath = extractPathFromDroppedFiles(paths);
+      if (!droppedPath) {
+        return;
+      }
+
+      setBindDialog((current) => ({
+        ...current,
+        open: true,
+        path: droppedPath,
+        error: "",
+      }));
+    }, true);
+
+    return () => {
+      if (typeof runtimeBridge.runtime?.OnFileDropOff === "function") {
+        OnFileDropOff();
+      }
+    };
+  }, []);
+
+  /**
+   * 顶部提示条在展示 5 秒后自动消失。
+   *
+   * 当用户手动关闭提示，或新的提示覆盖旧提示时，会同步清理旧定时器，
+   * 避免后续误清空最新提示。
+   */
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setNotice(null);
+    }, noticeAutoDismissDelayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [notice]);
 
   async function reloadWorkspace(preferredRepositoryId?: string) {
     setLoadingMessage("正在同步仓库状态…");
@@ -299,22 +373,6 @@ export default function App() {
       await reloadWorkspace(summary.id);
     } catch (error) {
       setBindDialog((current) => ({ ...current, busy: false, error: toErrorMessage(error) }));
-    }
-  }
-
-  /**
-   * handleDropRepositoryPath 处理拖拽绑定目录。
-   */
-  function handleDropRepositoryPath(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const path = extractPathFromDrop(event);
-    if (path) {
-      setBindDialog((current) => ({
-        ...current,
-        open: true,
-        path,
-        error: "",
-      }));
     }
   }
 
@@ -663,7 +721,7 @@ export default function App() {
   const enabledTools = settings?.externalTools.filter((tool) => tool.enabled && tool.command.trim()) ?? [];
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
+    <div className="relative h-screen overflow-hidden">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-[-12%] top-[-6%] h-[420px] w-[420px] rounded-full bg-ember-200/30 blur-3xl" />
         <div className="absolute bottom-[-14%] right-[-10%] h-[380px] w-[380px] rounded-full bg-moss-500/20 blur-3xl" />
@@ -678,7 +736,7 @@ export default function App() {
         </div>
       ) : null}
 
-      <main className="relative mx-auto flex min-h-screen max-w-[1560px] flex-col gap-3 px-3 py-3 md:px-5">
+      <main className="no-scrollbar relative mx-auto flex h-screen max-w-[1560px] flex-col gap-3 overflow-y-auto px-3 py-3 md:px-5">
         <EnvironmentStrip environment={environment} />
 
         {notice ? (
@@ -730,8 +788,7 @@ export default function App() {
         {!repositoryView ? (
           <section
             className="glass-panel flex min-h-[240px] flex-col items-center justify-center gap-3 border-dashed border-stone-300/80 px-5 py-8 text-center"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={handleDropRepositoryPath}
+            style={wailsDropTargetStyle}
           >
             <span className="tag bg-ember-100 px-2.5 py-0.5 text-[11px] text-ember-800">空工作区</span>
             <h2 className="font-display text-2xl font-semibold text-stone-900">先绑定一个主 Git 仓库</h2>
@@ -798,8 +855,7 @@ export default function App() {
         <form className="space-y-4" onSubmit={handleBindRepository}>
           <div
             className="rounded-[20px] border border-dashed border-stone-300 bg-stone-50/80 px-4 py-6 text-center"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={handleDropRepositoryPath}
+            style={wailsDropTargetStyle}
           >
             <p className="font-display text-lg font-semibold text-stone-900">把仓库目录拖到这里</p>
             <p className="mt-1.5 text-sm leading-6 text-stone-600">也可以直接把 `D:\Code\your-repo` 这类路径粘贴到下面。</p>

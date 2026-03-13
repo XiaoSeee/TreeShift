@@ -51,6 +51,25 @@ func TestIsDirtyRemoveError(t *testing.T) {
 	}
 }
 
+// TestParseWorktreeChangeSummary 验证文件改动摘要会被正确归类。
+func TestParseWorktreeChangeSummary(t *testing.T) {
+	output := ` M internal/git/service.go
+M  frontend/src/App.tsx
+?? frontend/src/components/NewCard.tsx
+D  docs/old-plan.md
+RD legacy/config.json
+`
+
+	summary := ParseWorktreeChangeSummary(output)
+	if summary.ChangedCount != 3 {
+		t.Fatalf("正向改动数量不正确，want=3 got=%d", summary.ChangedCount)
+	}
+
+	if summary.DeletedCount != 2 {
+		t.Fatalf("删除改动数量不正确，want=2 got=%d", summary.DeletedCount)
+	}
+}
+
 // simpleError 是测试内使用的极简错误类型。
 type simpleError string
 

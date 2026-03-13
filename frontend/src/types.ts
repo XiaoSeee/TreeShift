@@ -72,6 +72,14 @@ export interface RepositorySummary {
 }
 
 /**
+ * WorktreeChangeSummary 描述卡片右上角展示的轻量改动摘要。
+ */
+export interface WorktreeChangeSummary {
+  changedCount: number;
+  deletedCount: number;
+}
+
+/**
  * WorktreeStatus 定义 worktree 卡片可展示的状态枚举。
  */
 export type WorktreeStatus = "normal" | "missing" | "pending_cleanup";
@@ -87,6 +95,7 @@ export interface WorktreeInfo {
   isDetached: boolean;
   status: WorktreeStatus;
   statusMessage: string;
+  changeSummary: WorktreeChangeSummary;
 }
 
 /**
