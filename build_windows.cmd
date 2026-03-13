@@ -18,6 +18,12 @@ if errorlevel 1 goto :failed
 call :require_command wails "Wails CLI"
 if errorlevel 1 goto :failed
 
+call :ensure_frontend_dependencies
+if errorlevel 1 goto :failed
+
+call :ensure_frontend_dist
+if errorlevel 1 goto :failed
+
 echo [STEP] Running Go tests...
 go test ./...
 if errorlevel 1 (
@@ -47,6 +53,34 @@ if errorlevel 1 (
   echo [ERROR] %~2 is not available in PATH.
   exit /b 1
 )
+exit /b 0
+
+:ensure_frontend_dependencies
+if exist "frontend\node_modules" exit /b 0
+
+echo [STEP] Installing frontend dependencies...
+pushd "frontend"
+call npm.cmd install
+if errorlevel 1 (
+  popd
+  echo [ERROR] Frontend dependency installation failed.
+  exit /b 1
+)
+popd
+exit /b 0
+
+:ensure_frontend_dist
+if exist "frontend\dist\index.html" exit /b 0
+
+echo [STEP] Building frontend assets for Go embed...
+pushd "frontend"
+call npm.cmd run build
+if errorlevel 1 (
+  popd
+  echo [ERROR] Frontend asset build failed.
+  exit /b 1
+)
+popd
 exit /b 0
 
 :check_output

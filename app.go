@@ -310,7 +310,7 @@ func (a *App) RemoveWorktree(request model.RemoveWorktreeRequest) (model.RemoveW
 			return model.RemoveWorktreeResult{
 				Success:       false,
 				Stage:         model.RemoveStageDirtyBlocked,
-				Message:       removeErr.Error(),
+				Message:       "当前 Worktree 中仍有未提交内容。强制删除后，这些内容不会保留。",
 				RequiresForce: true,
 			}, nil
 		}

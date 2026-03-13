@@ -1,6 +1,5 @@
 import type { CSSProperties, ChangeEvent, FormEvent } from "react";
 import { useEffect, useState } from "react";
-import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 
 import { EnvironmentStrip } from "./components/EnvironmentStrip";
 import { Modal } from "./components/Modal";
@@ -34,6 +33,17 @@ type NoticeTone = "success" | "error" | "warning";
 interface NoticeState {
   tone: NoticeTone;
   message: string;
+}
+
+/**
+ * WailsRuntime 描述当前页面真正用到的 Wails runtime 拖拽接口。
+ *
+ * 这里不直接引用生成的 `wailsjs/runtime` 文件，
+ * 以保证 fresh clone 场景下在尚未执行 `wails build` 前，前端仍可独立完成构建。
+ */
+interface WailsRuntime {
+  OnFileDrop(callback: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean): void;
+  OnFileDropOff(): void;
 }
 
 /**
@@ -225,17 +235,16 @@ export default function App() {
    */
   useEffect(() => {
     const runtimeBridge = window as Window & {
-      runtime?: {
-        OnFileDrop?: typeof OnFileDrop;
-        OnFileDropOff?: typeof OnFileDropOff;
-      };
+      runtime?: Partial<WailsRuntime>;
     };
 
     if (typeof runtimeBridge.runtime?.OnFileDrop !== "function") {
       return;
     }
 
-    OnFileDrop((_x, _y, paths) => {
+    runtimeBridge.runtime.OnFileDrop((x: number, y: number, paths: string[]) => {
+      void x;
+      void y;
       const droppedPath = extractPathFromDroppedFiles(paths);
       if (!droppedPath) {
         return;
@@ -251,7 +260,7 @@ export default function App() {
 
     return () => {
       if (typeof runtimeBridge.runtime?.OnFileDropOff === "function") {
-        OnFileDropOff();
+        runtimeBridge.runtime.OnFileDropOff();
       }
     };
   }, []);
