@@ -1,0 +1,73 @@
+name: Build and Release Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+          echo "$(go env GOPATH)\\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Build Windows EXE
+        run: wails build -clean
+
+      - name: Prepare release asset
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build/bin/TreeShift.exe")) {
+            throw "build/bin/TreeShift.exe was not found after build"
+          }
+          Compress-Archive -Path "build/bin/TreeShift.exe" -DestinationPath "TreeShift-windows-amd64.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TreeShift-windows-amd64
+          path: |
+            build/bin/TreeShift.exe
+            TreeShift-windows-amd64.zip
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/bin/TreeShift.exe
+            TreeShift-windows-amd64.zip
