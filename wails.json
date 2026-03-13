@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "TreeShift",
+  "outputfilename": "TreeShift",
+  "frontend:dir": "frontend",
+  "frontend:install": "npm.cmd install",
+  "frontend:build": "npm.cmd run build",
+  "frontend:dev:watcher": "npm.cmd run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Codex",
+    "email": ""
+  },
+  "info": {
+    "companyName": "TreeShift",
+    "productName": "TreeShift",
+    "productVersion": "0.1.0",
+    "comments": "Git Worktree 管理器"
+  }
+}

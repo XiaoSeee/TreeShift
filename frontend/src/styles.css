@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color: #241d18;
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(205, 143, 89, 0.18), transparent 32%),
+      radial-gradient(circle at right center, rgba(61, 90, 65, 0.15), transparent 24%),
+      linear-gradient(180deg, #faf5ef 0%, #efe5d6 100%);
+  }
+
+  body {
+    @apply min-h-screen bg-transparent text-stone-900 antialiased;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    @apply font-body;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply rounded-[24px] border border-white/60 bg-white/75 shadow-float backdrop-blur-xl;
+  }
+
+  .ghost-button {
+    @apply rounded-full border border-stone-300/80 bg-white/70 px-3 py-1.5 text-sm font-medium text-stone-700 transition hover:border-ember-400 hover:bg-ember-50 hover:text-ember-800 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .primary-button {
+    @apply rounded-full bg-ink-900 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-moss-700 disabled:cursor-not-allowed disabled:bg-stone-400;
+  }
+
+  .field-shell {
+    @apply rounded-2xl border border-stone-300/80 bg-white/75 px-3.5 py-2.5 text-sm text-stone-900 outline-none transition focus:border-ember-500 focus:ring-2 focus:ring-ember-200;
+  }
+
+  .tag {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em];
+  }
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

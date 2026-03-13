@@ -1,1 +1,39 @@
-build/
+# 构建产物
+/build/
+/frontend/dist/
+/frontend/wailsjs/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go 测试与覆盖率
+.coverprofile
+coverage.out
+
+# 本地运行缓存与配置
+/.cache/
+/config.json
+/config.json.tmp
+
+# 前端依赖与编译缓存
+/frontend/node_modules/
+/frontend/.vite/
+/frontend/package.json.md5
+/frontend/*.tsbuildinfo
+/frontend/vite.config.js
+/frontend/vite.config.d.ts
+
+# 日志文件
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
