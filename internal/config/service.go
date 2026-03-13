@@ -104,6 +104,7 @@ func DefaultSettings() model.Settings {
 		SchemaVersion:       model.SettingsSchemaVersion,
 		Repositories:        []model.RepositoryBinding{},
 		DefaultWorktreeRoot: "",
+		PendingCleanups:     []model.PendingCleanup{},
 		ExternalTools: []model.ExternalTool{
 			{
 				ID:      "tool-codex",
@@ -126,6 +127,9 @@ func NormalizeSettings(settings model.Settings) model.Settings {
 
 	if normalized.Repositories == nil {
 		normalized.Repositories = []model.RepositoryBinding{}
+	}
+	if normalized.PendingCleanups == nil {
+		normalized.PendingCleanups = []model.PendingCleanup{}
 	}
 	if normalized.ExternalTools == nil {
 		normalized.ExternalTools = []model.ExternalTool{}
@@ -158,6 +162,23 @@ func NormalizeSettings(settings model.Settings) model.Settings {
 		}
 		normalized.ExternalTools[index] = tool
 	}
+
+	cleanups := make([]model.PendingCleanup, 0, len(normalized.PendingCleanups))
+	for _, cleanup := range normalized.PendingCleanups {
+		cleanPath := filepath.Clean(strings.TrimSpace(cleanup.Path))
+		if strings.TrimSpace(cleanup.Path) == "" || cleanPath == "." {
+			continue
+		}
+
+		cleanups = append(cleanups, model.PendingCleanup{
+			RepositoryID: strings.TrimSpace(cleanup.RepositoryID),
+			Path:         cleanPath,
+			Branch:       strings.TrimSpace(cleanup.Branch),
+			Head:         strings.TrimSpace(cleanup.Head),
+			LastError:    strings.TrimSpace(cleanup.LastError),
+		})
+	}
+	normalized.PendingCleanups = cleanups
 
 	return normalized
 }

@@ -138,6 +138,86 @@ function emptyRemoveDialogState(): RemoveDialogState {
 }
 
 /**
+ * removeDialogTitle 返回删除弹窗标题。
+ */
+function removeDialogTitle(state: RemoveDialogState): string {
+  if (state.forceStage) {
+    return "强制删除确认";
+  }
+
+  if (state.worktree?.status === "pending_cleanup") {
+    return "删除残留目录";
+  }
+
+  if (state.worktree?.status === "missing") {
+    return "移除 Git 记录";
+  }
+
+  return "删除 Worktree";
+}
+
+/**
+ * removeDialogDescription 返回删除弹窗说明文案。
+ */
+function removeDialogDescription(state: RemoveDialogState): string {
+  if (state.forceStage) {
+    return "当前 Worktree 中仍有未提交内容。强制删除会直接移除 Git 记录，并继续尝试删除目录。";
+  }
+
+  if (state.worktree?.status === "pending_cleanup") {
+    return "该目录对应的 Git Worktree 记录已移除。本次只会删除残留目录。若目录仍被占用，卡片会继续保留。";
+  }
+
+  if (state.worktree?.status === "missing") {
+    return "该 Worktree 的目录已经不存在。本次只会移除 Git 中残留的 Worktree 记录，不会删除其他文件。";
+  }
+
+  return "删除会先执行 Git 注销，再尝试物理删除目录。若检测到未提交修改，会要求你再确认一次强制删除。";
+}
+
+/**
+ * removeDialogPrimaryActionLabel 返回删除弹窗主按钮文案。
+ */
+function removeDialogPrimaryActionLabel(state: RemoveDialogState): string {
+  if (state.busy) {
+    return "处理中…";
+  }
+
+  if (state.forceStage) {
+    return "强制删除";
+  }
+
+  if (state.worktree?.status === "pending_cleanup") {
+    return "删除目录";
+  }
+
+  if (state.worktree?.status === "missing") {
+    return "移除记录";
+  }
+
+  return "删除";
+}
+
+/**
+ * removeDialogTargetText 返回删除弹窗目标摘要。
+ */
+function removeDialogTargetText(worktree: WorktreeInfo | null): string {
+  if (!worktree) {
+    return "尚未选择删除目标。";
+  }
+
+  if (worktree.status === "pending_cleanup") {
+    return `目标分支：${worktree.branch} · 残留目录：${worktree.path}`;
+  }
+
+  if (worktree.status === "missing") {
+    return `目标分支：${worktree.branch} · 缺失目录：${worktree.path}`;
+  }
+
+  return `目标分支：${worktree.branch} · 目录：${worktree.path}`;
+}
+
+/**
  * pickInitialRepositoryId 选择当前应展示的仓库 ID。
  */
 function pickInitialRepositoryId(
@@ -556,30 +636,6 @@ export default function App() {
   }
 
   /**
-   * handleRetryCleanup 对待清理目录执行重试删除。
-   */
-  async function handleRetryCleanup(worktree: WorktreeInfo) {
-    if (!activeRepositoryId) {
-      return;
-    }
-
-    try {
-      const result = await runWithLoading("正在重试清理目录…", () =>
-        backend.retryDeleteFolder({
-          repositoryId: activeRepositoryId,
-          path: worktree.path,
-        }),
-      );
-
-      setRepositoryView(result.view);
-      await refreshRepositorySummaryOnly();
-      setNotice({ tone: result.success ? "success" : "warning", message: result.message });
-    } catch (error) {
-      setNotice({ tone: "error", message: toErrorMessage(error) });
-    }
-  }
-
-  /**
    * handleLaunchTool 在指定 worktree 中启动 AI CLI。
    */
   async function handleLaunchTool(toolId: string, worktree: WorktreeInfo) {
@@ -834,7 +890,6 @@ export default function App() {
                     void backend.openInTerminal(path).catch((error) => setNotice({ tone: "error", message: toErrorMessage(error) }))
                   }
                   onRemove={openRemoveDialog}
-                  onRetryCleanup={(targetWorktree) => void handleRetryCleanup(targetWorktree)}
                   tools={enabledTools}
                   worktree={worktree}
                 />
@@ -988,27 +1043,23 @@ export default function App() {
       </Modal>
 
       <Modal
-        description="删除会先执行 Git 注销，再尝试物理删除目录。若检测到未提交修改，会要求你再确认一次强制删除。"
+        description={removeDialogDescription(removeDialog)}
         footer={
           <div className="flex flex-wrap justify-end gap-3">
             <button className="ghost-button" onClick={() => setRemoveDialog(emptyRemoveDialogState())} type="button">
               取消
             </button>
             <button className="primary-button" disabled={removeDialog.busy} onClick={() => void handleRemoveWorktree()} type="button">
-              {removeDialog.busy ? "处理中…" : removeDialog.forceStage ? "强制删除" : "删除"}
+              {removeDialogPrimaryActionLabel(removeDialog)}
             </button>
           </div>
         }
         onClose={() => setRemoveDialog(emptyRemoveDialogState())}
         open={removeDialog.open}
-        title={removeDialog.forceStage ? "强制删除确认" : "删除 Worktree"}
+        title={removeDialogTitle(removeDialog)}
       >
         <div className="space-y-4">
-          <p className="text-sm text-stone-700">
-            {removeDialog.worktree
-              ? `目标分支：${removeDialog.worktree.branch} · 目录：${removeDialog.worktree.path}`
-              : "尚未选择删除目标。"}
-          </p>
+          <p className="text-sm text-stone-700">{removeDialogTargetText(removeDialog.worktree)}</p>
           {removeDialog.message ? (
             <div className="rounded-2xl border border-amber-300/80 bg-amber-50/90 px-4 py-4 text-sm text-amber-900">
               {removeDialog.message}

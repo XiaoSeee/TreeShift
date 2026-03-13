@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -48,7 +49,7 @@ func NewApp() *App {
 		gitService:         git.NewService(),
 		launcherService:    launcher.NewService(),
 		settings:           settings,
-		pendingCleanup:     map[string]model.PendingCleanup{},
+		pendingCleanup:     pendingCleanupMapFromSlice(settings.PendingCleanups),
 		startupWarnings:    []string{},
 	}
 
@@ -88,6 +89,7 @@ func (a *App) SaveSettings(settings model.Settings) (model.Settings, error) {
 	defer a.mu.Unlock()
 
 	normalized := config.NormalizeSettings(settings)
+	normalized.PendingCleanups = pendingCleanupSlice(a.pendingCleanup)
 	a.normalizeActiveRepositoryLocked(&normalized)
 
 	if err := a.configService.Save(normalized); err != nil {
@@ -102,6 +104,10 @@ func (a *App) SaveSettings(settings model.Settings) (model.Settings, error) {
 func (a *App) ListRepositories() ([]model.RepositorySummary, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if err := a.reconcilePendingCleanupsLocked(); err != nil {
+		return nil, err
+	}
 
 	summaries := make([]model.RepositorySummary, 0, len(a.settings.Repositories))
 	for _, repository := range a.settings.Repositories {
@@ -166,7 +172,7 @@ func (a *App) BindRepository(path string) (model.RepositorySummary, error) {
 	}
 
 	a.normalizeActiveRepositoryLocked(&a.settings)
-	if err := a.configService.Save(a.settings); err != nil {
+	if err := a.saveCurrentSettingsLocked(); err != nil {
 		return model.RepositorySummary{}, err
 	}
 
@@ -223,7 +229,7 @@ func (a *App) UnbindRepository(repositoryID string) error {
 	}
 
 	a.normalizeActiveRepositoryLocked(&a.settings)
-	return a.configService.Save(a.settings)
+	return a.saveCurrentSettingsLocked()
 }
 
 // SelectRepository 切换当前活动仓库。
@@ -233,7 +239,7 @@ func (a *App) SelectRepository(repositoryID string) error {
 
 	if repositoryID == "" {
 		a.settings.UIPreferences.LastSelectedRepositoryID = ""
-		return a.configService.Save(a.settings)
+		return a.saveCurrentSettingsLocked()
 	}
 
 	if _, err := a.repositoryByIDLocked(repositoryID); err != nil {
@@ -241,7 +247,7 @@ func (a *App) SelectRepository(repositoryID string) error {
 	}
 
 	a.settings.UIPreferences.LastSelectedRepositoryID = repositoryID
-	return a.configService.Save(a.settings)
+	return a.saveCurrentSettingsLocked()
 }
 
 // GetWorktrees 返回指定仓库的完整视图。
@@ -294,14 +300,17 @@ func (a *App) RemoveWorktree(request model.RemoveWorktreeRequest) (model.RemoveW
 		return model.RemoveWorktreeResult{}, err
 	}
 
-	removedBranch := "unknown"
-	removedHead := ""
-	for _, worktree := range viewBefore.Worktrees {
-		if filepath.Clean(worktree.Path) == filepath.Clean(request.Path) {
-			removedBranch = worktree.Branch
-			removedHead = worktree.Head
-			break
-		}
+	targetWorktree, found := worktreeByPath(viewBefore.Worktrees, request.Path)
+	if !found {
+		return model.RemoveWorktreeResult{}, fmt.Errorf("未找到指定 Worktree：%s", request.Path)
+	}
+
+	if targetWorktree.Status == model.WorktreeStatusPendingCleanup {
+		return a.removePendingCleanupFolderLocked(repository, targetWorktree)
+	}
+
+	if targetWorktree.Status == model.WorktreeStatusMissing {
+		return a.removeMissingWorktreeLocked(repository, targetWorktree)
 	}
 
 	removeErr := a.gitService.RemoveWorktree(repository, request.Path, request.Force)
@@ -315,47 +324,10 @@ func (a *App) RemoveWorktree(request model.RemoveWorktreeRequest) (model.RemoveW
 			}, nil
 		}
 
-		return model.RemoveWorktreeResult{
-			Success: false,
-			Stage:   model.RemoveStageGitFailed,
-			Message: removeErr.Error(),
-		}, nil
+		return a.handleRemoveWorktreeErrorLocked(repository, targetWorktree, request.Path, removeErr)
 	}
 
-	if err := a.deleteFolderLocked(request.Path); err != nil {
-		a.pendingCleanup[filepath.Clean(request.Path)] = model.PendingCleanup{
-			RepositoryID: repository.ID,
-			Path:         filepath.Clean(request.Path),
-			Branch:       removedBranch,
-			Head:         removedHead,
-			LastError:    err.Error(),
-		}
-
-		view, viewErr := a.buildRepositoryViewLocked(repository)
-		if viewErr != nil {
-			return model.RemoveWorktreeResult{}, viewErr
-		}
-
-		return model.RemoveWorktreeResult{
-			Success: false,
-			Stage:   model.RemoveStageFolderBusy,
-			Message: fmt.Sprintf("Git 注销成功，但目录仍被占用：%v", err),
-			View:    view,
-		}, nil
-	}
-
-	delete(a.pendingCleanup, filepath.Clean(request.Path))
-	view, viewErr := a.buildRepositoryViewLocked(repository)
-	if viewErr != nil {
-		return model.RemoveWorktreeResult{}, viewErr
-	}
-
-	return model.RemoveWorktreeResult{
-		Success: true,
-		Stage:   model.RemoveStageRemoved,
-		Message: "Worktree 已删除。",
-		View:    view,
-	}, nil
+	return a.finalizeRemovedWorktreeLocked(repository, targetWorktree, request.Path)
 }
 
 // RetryDeleteFolder 对待清理目录再次执行物理删除。
@@ -376,6 +348,9 @@ func (a *App) RetryDeleteFolder(request model.RetryDeleteFolderRequest) (model.R
 		entry.Path = filepath.Clean(request.Path)
 		entry.LastError = err.Error()
 		a.pendingCleanup[filepath.Clean(request.Path)] = entry
+		if saveErr := a.saveCurrentSettingsLocked(); saveErr != nil {
+			return model.RetryDeleteFolderResult{}, saveErr
+		}
 
 		view, viewErr := a.buildRepositoryViewLocked(repository)
 		if viewErr != nil {
@@ -390,6 +365,9 @@ func (a *App) RetryDeleteFolder(request model.RetryDeleteFolderRequest) (model.R
 	}
 
 	delete(a.pendingCleanup, filepath.Clean(request.Path))
+	if err := a.saveCurrentSettingsLocked(); err != nil {
+		return model.RetryDeleteFolderResult{}, err
+	}
 	view, viewErr := a.buildRepositoryViewLocked(repository)
 	if viewErr != nil {
 		return model.RetryDeleteFolderResult{}, viewErr
@@ -451,6 +429,10 @@ func (a *App) ChooseDirectory(request model.DirectoryDialogRequest) (string, err
 //
 // 调用方必须持有 a.mu。该方法会合并 Git 当前 worktree 与待清理虚拟项。
 func (a *App) buildRepositoryViewLocked(repository model.RepositoryBinding) (model.RepositoryView, error) {
+	if err := a.reconcilePendingCleanupsLocked(); err != nil {
+		return model.RepositoryView{}, err
+	}
+
 	worktrees, err := a.gitService.ListWorktrees(repository)
 	if err != nil {
 		return model.RepositoryView{}, err
@@ -539,7 +521,6 @@ func (a *App) deleteFolderLocked(path string) error {
 
 	if _, err := os.Stat(cleanPath); err != nil {
 		if os.IsNotExist(err) {
-			delete(a.pendingCleanup, cleanPath)
 			return nil
 		}
 
@@ -573,4 +554,244 @@ func suggestedRootPath(repository model.RepositoryBinding, globalDefault string)
 
 	parent := filepath.Dir(repository.MainWorktreePath)
 	return filepath.Join(parent, "_worktrees", repository.DisplayName)
+}
+
+// removePendingCleanupFolderLocked 删除 Git 已注销后残留的物理目录。
+//
+// 该分支不会再调用 Git，只负责把残留目录从磁盘和持久化待清理列表中移除。
+func (a *App) removePendingCleanupFolderLocked(repository model.RepositoryBinding, worktree model.WorktreeInfo) (model.RemoveWorktreeResult, error) {
+	if err := a.deleteFolderLocked(worktree.Path); err != nil {
+		entry := a.pendingCleanup[filepath.Clean(worktree.Path)]
+		entry.RepositoryID = repository.ID
+		entry.Path = filepath.Clean(worktree.Path)
+		if strings.TrimSpace(entry.Branch) == "" {
+			entry.Branch = worktree.Branch
+		}
+		if strings.TrimSpace(entry.Head) == "" {
+			entry.Head = worktree.Head
+		}
+		entry.LastError = err.Error()
+		a.pendingCleanup[filepath.Clean(worktree.Path)] = entry
+		if saveErr := a.saveCurrentSettingsLocked(); saveErr != nil {
+			return model.RemoveWorktreeResult{}, saveErr
+		}
+
+		view, viewErr := a.buildRepositoryViewLocked(repository)
+		if viewErr != nil {
+			return model.RemoveWorktreeResult{}, viewErr
+		}
+
+		return model.RemoveWorktreeResult{
+			Success: false,
+			Stage:   model.RemoveStageFolderBusy,
+			Message: fmt.Sprintf("残留目录仍被占用：%v", err),
+			View:    view,
+		}, nil
+	}
+
+	delete(a.pendingCleanup, filepath.Clean(worktree.Path))
+	if err := a.saveCurrentSettingsLocked(); err != nil {
+		return model.RemoveWorktreeResult{}, err
+	}
+
+	view, viewErr := a.buildRepositoryViewLocked(repository)
+	if viewErr != nil {
+		return model.RemoveWorktreeResult{}, viewErr
+	}
+
+	return model.RemoveWorktreeResult{
+		Success: true,
+		Stage:   model.RemoveStageRemoved,
+		Message: "残留目录已删除。",
+		View:    view,
+	}, nil
+}
+
+// removeMissingWorktreeLocked 删除“Git 记录仍在但目录已缺失”的 worktree。
+//
+// 该分支只移除 Git worktree 记录，不再尝试物理删除目录。
+func (a *App) removeMissingWorktreeLocked(repository model.RepositoryBinding, worktree model.WorktreeInfo) (model.RemoveWorktreeResult, error) {
+	if err := a.gitService.RemoveWorktree(repository, worktree.Path, true); err != nil {
+		return model.RemoveWorktreeResult{
+			Success: false,
+			Stage:   model.RemoveStageGitFailed,
+			Message: err.Error(),
+		}, nil
+	}
+
+	delete(a.pendingCleanup, filepath.Clean(worktree.Path))
+	if err := a.saveCurrentSettingsLocked(); err != nil {
+		return model.RemoveWorktreeResult{}, err
+	}
+
+	view, viewErr := a.buildRepositoryViewLocked(repository)
+	if viewErr != nil {
+		return model.RemoveWorktreeResult{}, viewErr
+	}
+
+	return model.RemoveWorktreeResult{
+		Success: true,
+		Stage:   model.RemoveStageRemoved,
+		Message: "Git Worktree 记录已移除。",
+		View:    view,
+	}, nil
+}
+
+// handleRemoveWorktreeErrorLocked 处理 Git remove 返回错误后的分流逻辑。
+//
+// 若 Git 记录实际上已经被移除，则继续走物理目录收尾；否则按普通 Git 失败返回。
+func (a *App) handleRemoveWorktreeErrorLocked(
+	repository model.RepositoryBinding,
+	worktree model.WorktreeInfo,
+	path string,
+	removeErr error,
+) (model.RemoveWorktreeResult, error) {
+	stillRegistered, err := a.isWorktreeRegisteredLocked(repository, path)
+	if err != nil {
+		return model.RemoveWorktreeResult{}, err
+	}
+
+	if stillRegistered {
+		return model.RemoveWorktreeResult{
+			Success: false,
+			Stage:   model.RemoveStageGitFailed,
+			Message: removeErr.Error(),
+		}, nil
+	}
+
+	return a.finalizeRemovedWorktreeLocked(repository, worktree, path)
+}
+
+// finalizeRemovedWorktreeLocked 在 Git 记录已移除后完成目录收尾。
+//
+// 目录删除成功时直接返回成功；若目录仍被占用，则写入待清理记录并返回异常卡片。
+func (a *App) finalizeRemovedWorktreeLocked(
+	repository model.RepositoryBinding,
+	worktree model.WorktreeInfo,
+	path string,
+) (model.RemoveWorktreeResult, error) {
+	if err := a.deleteFolderLocked(path); err != nil {
+		a.pendingCleanup[filepath.Clean(path)] = model.PendingCleanup{
+			RepositoryID: repository.ID,
+			Path:         filepath.Clean(path),
+			Branch:       worktree.Branch,
+			Head:         worktree.Head,
+			LastError:    err.Error(),
+		}
+		if saveErr := a.saveCurrentSettingsLocked(); saveErr != nil {
+			return model.RemoveWorktreeResult{}, saveErr
+		}
+
+		view, viewErr := a.buildRepositoryViewLocked(repository)
+		if viewErr != nil {
+			return model.RemoveWorktreeResult{}, viewErr
+		}
+
+		return model.RemoveWorktreeResult{
+			Success: false,
+			Stage:   model.RemoveStageFolderBusy,
+			Message: fmt.Sprintf("Git 注销成功，但目录仍被占用：%v", err),
+			View:    view,
+		}, nil
+	}
+
+	delete(a.pendingCleanup, filepath.Clean(path))
+	if err := a.saveCurrentSettingsLocked(); err != nil {
+		return model.RemoveWorktreeResult{}, err
+	}
+	view, viewErr := a.buildRepositoryViewLocked(repository)
+	if viewErr != nil {
+		return model.RemoveWorktreeResult{}, viewErr
+	}
+
+	return model.RemoveWorktreeResult{
+		Success: true,
+		Stage:   model.RemoveStageRemoved,
+		Message: "Worktree 已删除。",
+		View:    view,
+	}, nil
+}
+
+// reconcilePendingCleanupsLocked 清理已经被外部手动删除的残留目录记录。
+//
+// 若发现待清理目录已经不存在，则会同步移除持久化记录，避免刷新后继续显示失效卡片。
+func (a *App) reconcilePendingCleanupsLocked() error {
+	changed := false
+	for cleanupPath := range a.pendingCleanup {
+		if _, err := os.Stat(cleanupPath); err == nil {
+			continue
+		} else if os.IsNotExist(err) {
+			delete(a.pendingCleanup, cleanupPath)
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+
+	return a.saveCurrentSettingsLocked()
+}
+
+// saveCurrentSettingsLocked 把当前内存配置与待清理记录一起落盘。
+//
+// 调用方必须持有 a.mu。该方法会先把 map 形态的待清理列表同步回 Settings。
+func (a *App) saveCurrentSettingsLocked() error {
+	a.settings.PendingCleanups = pendingCleanupSlice(a.pendingCleanup)
+	return a.configService.Save(a.settings)
+}
+
+// pendingCleanupMapFromSlice 把持久化切片转换为按路径索引的运行态映射。
+func pendingCleanupMapFromSlice(cleanups []model.PendingCleanup) map[string]model.PendingCleanup {
+	result := map[string]model.PendingCleanup{}
+	for _, cleanup := range cleanups {
+		cleanPath := filepath.Clean(cleanup.Path)
+		if cleanPath == "." || strings.TrimSpace(cleanup.Path) == "" {
+			continue
+		}
+
+		cleanup.Path = cleanPath
+		result[cleanPath] = cleanup
+	}
+
+	return result
+}
+
+// pendingCleanupSlice 把运行态映射转换为稳定排序的持久化切片。
+func pendingCleanupSlice(cleanups map[string]model.PendingCleanup) []model.PendingCleanup {
+	keys := make([]string, 0, len(cleanups))
+	for cleanupPath := range cleanups {
+		keys = append(keys, cleanupPath)
+	}
+	sort.Strings(keys)
+
+	result := make([]model.PendingCleanup, 0, len(keys))
+	for _, cleanupPath := range keys {
+		result = append(result, cleanups[cleanupPath])
+	}
+
+	return result
+}
+
+// worktreeByPath 根据物理路径从当前视图中查找目标卡片。
+func worktreeByPath(worktrees []model.WorktreeInfo, path string) (model.WorktreeInfo, bool) {
+	cleanPath := filepath.Clean(path)
+	for _, worktree := range worktrees {
+		if filepath.Clean(worktree.Path) == cleanPath {
+			return worktree, true
+		}
+	}
+
+	return model.WorktreeInfo{}, false
+}
+
+// isWorktreeRegisteredLocked 判断目标路径是否仍然存在于 Git worktree 列表中。
+func (a *App) isWorktreeRegisteredLocked(repository model.RepositoryBinding, path string) (bool, error) {
+	worktrees, err := a.gitService.ListWorktrees(repository)
+	if err != nil {
+		return false, err
+	}
+
+	_, found := worktreeByPath(worktrees, path)
+	return found, nil
 }

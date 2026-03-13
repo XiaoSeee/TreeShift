@@ -56,6 +56,7 @@ export interface Settings {
   repositories: RepositoryBinding[];
   defaultWorktreeRoot: string;
   externalTools: ExternalTool[];
+  pendingCleanups: PendingCleanup[];
   uiPreferences: UIPreferences;
 }
 
@@ -69,6 +70,17 @@ export interface RepositorySummary {
   defaultWorktreeRoot: string;
   worktreeCount: number;
   pendingCleanupCount: number;
+}
+
+/**
+ * PendingCleanup 描述 Git 已移除但目录仍残留的待清理项。
+ */
+export interface PendingCleanup {
+  repositoryId: string;
+  path: string;
+  branch: string;
+  head: string;
+  lastError: string;
 }
 
 /**

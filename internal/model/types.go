@@ -1,7 +1,7 @@
 package model
 
 // SettingsSchemaVersion 定义配置文件结构版本。
-const SettingsSchemaVersion = 1
+const SettingsSchemaVersion = 2
 
 // Worktree 状态常量用于前端渲染标签和删除重试逻辑。
 const (
@@ -74,6 +74,7 @@ type Settings struct {
 	Repositories        []RepositoryBinding `json:"repositories"`
 	DefaultWorktreeRoot string              `json:"defaultWorktreeRoot"`
 	ExternalTools       []ExternalTool      `json:"externalTools"`
+	PendingCleanups     []PendingCleanup    `json:"pendingCleanups"`
 	UIPreferences       UIPreferences       `json:"uiPreferences"`
 }
 
@@ -178,7 +179,7 @@ type DirectoryDialogRequest struct {
 
 // PendingCleanup 保存 Git 已注销但物理目录仍未删除完成的项目。
 //
-// 它只存在于应用内存中，用于前端展示“待清理”虚拟卡片。
+// 该结构会持久化到配置文件中，确保刷新或重启后仍能继续展示和清理。
 type PendingCleanup struct {
 	RepositoryID string `json:"repositoryId"`
 	Path         string `json:"path"`

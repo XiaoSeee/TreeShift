@@ -10,7 +10,6 @@ interface WorktreeCardProps {
   onOpenTerminal: (path: string) => void;
   onLaunchTool: (toolId: string, worktree: WorktreeInfo) => void;
   onRemove: (worktree: WorktreeInfo) => void;
-  onRetryCleanup: (worktree: WorktreeInfo) => void;
 }
 
 /**
@@ -30,16 +29,27 @@ export function WorktreeCard({
   onOpenTerminal,
   onLaunchTool,
   onRemove,
-  onRetryCleanup,
 }: WorktreeCardProps) {
   const isUnavailable = worktree.status !== "normal";
-  const canDelete = !worktree.isMain && worktree.status === "normal";
+  const canDelete = !worktree.isMain;
   const shouldShowChangeSummary = worktree.status === "normal" && hasWorktreeChanges(worktree);
+  const cardTone =
+    worktree.status === "pending_cleanup"
+      ? "border-rose-200/80 bg-rose-50/60"
+      : worktree.status === "missing"
+        ? "border-amber-200/80 bg-amber-50/60"
+        : "";
+  const pathTone =
+    worktree.status === "pending_cleanup"
+      ? "border-rose-200/80 bg-white/75"
+      : worktree.status === "missing"
+        ? "border-amber-200/80 bg-white/75"
+        : "border-stone-200/80 bg-white/55";
   const statusTone =
     worktree.status === "pending_cleanup"
-      ? "bg-amber-100 text-amber-900"
+      ? "bg-rose-100 text-rose-700"
       : worktree.status === "missing"
-        ? "bg-rose-100 text-rose-700"
+        ? "bg-amber-100 text-amber-900"
         : "bg-emerald-100 text-emerald-800";
   const secondaryActions = tools.length === 0
     ? (
@@ -62,7 +72,7 @@ export function WorktreeCard({
     );
 
   return (
-    <article className="glass-panel overflow-hidden">
+    <article className={`glass-panel overflow-hidden ${cardTone}`.trim()}>
       <div className="border-b border-stone-200/80 px-3 py-3">
         <div className="space-y-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -90,7 +100,7 @@ export function WorktreeCard({
               </div>
             ) : null}
           </div>
-          <div className="flex items-center gap-2 rounded-xl border border-stone-200/80 bg-white/55 px-3 py-2">
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${pathTone}`.trim()}>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-5 text-stone-900" title={worktree.path}>
                 {worktree.path}
@@ -113,15 +123,9 @@ export function WorktreeCard({
               >
                 终端
               </button>
-              {worktree.status === "pending_cleanup" ? (
-                <button className="primary-button shrink-0 px-2 py-1 text-[11px]" onClick={() => onRetryCleanup(worktree)} type="button">
-                  重试
-                </button>
-              ) : (
-                <button className="ghost-button shrink-0 px-2 py-1 text-[11px]" disabled={!canDelete} onClick={() => onRemove(worktree)} type="button">
-                  删除
-                </button>
-              )}
+              <button className="ghost-button shrink-0 px-2 py-1 text-[11px]" disabled={!canDelete} onClick={() => onRemove(worktree)} type="button">
+                删除
+              </button>
               {secondaryActions}
             </div>
           </div>
