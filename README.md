@@ -11,8 +11,9 @@ TreeShift 是一个面向 Windows 的 Git worktree 桌面管理器，用来把�
 ## 功能简介
 
 - 绑定一个或多个 Git 仓库，并自动读取当前仓库的 worktree 列表
-- 基于现有分支创建 worktree，或从某个基线分支新建分支并创建 worktree
+- 支持以游离 HEAD 创建 worktree，也支持基于现有分支创建，或从某个基线分支新建分支并创建
 - 统一展示 worktree 状态，包括正常、目录缺失、待清理目录等情况
+- 对游离 HEAD worktree 使用专门的 `DETACHED` 标签展示，并可直接附着到新分支或空闲的现有分支
 - 在指定 worktree 中快速打开资源管理器和 Windows Terminal
 - 配置外部 CLI 工具，并在目标 worktree 中直接启动
 - 支持目录拖拽绑定仓库
@@ -39,10 +40,13 @@ TreeShift 是一个面向 Windows 的 Git worktree 桌面管理器，用来把�
 
 ### 2. 创建 Worktree
 
-点击“新建”后，可以选择两种模式：
+点击“新建”后，可以选择三种模式：
 
+- 以游离 HEAD 创建
 - 基于现有分支创建 worktree
-- 基于某个基线分支新建一个分支，并同时创建 worktree
+- 创建新分支并创建
+
+“以游离 HEAD 创建”适合先从某个现有分支拉出一个不立即绑定分支名的 worktree，后续再决定是否落到正式分支上。
 
 目标目录会根据建议根目录和分支名自动生成，你也可以手动修改。
 
@@ -54,6 +58,11 @@ TreeShift 是一个面向 Windows 的 Git worktree 桌面管理器，用来把�
 - 打开终端
 - 删除 worktree
 - 启动外部工具
+
+如果某个 worktree 处于游离 HEAD 状态，卡片上的分支标签会显示为 `DETACHED`。点击这个标签后，可以：
+
+- 基于当前游离 HEAD 创建一个新分支并切换过去
+- 直接切换到一个当前没有被其他 worktree 占用的现有本地分支
 
 如果 Git 记录已经删除但物理目录还没清理完，TreeShift 会把它保留为“待清理”状态，方便后续继续处理，而不是直接从界面里消失。
 

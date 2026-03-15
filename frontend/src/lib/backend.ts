@@ -1,4 +1,5 @@
 import type {
+  AttachDetachedWorktreeRequest,
   CreateWorktreeRequest,
   DirectoryDialogRequest,
   EnvironmentStatus,
@@ -25,6 +26,7 @@ interface BackendApp {
   SelectRepository(repositoryId: string): Promise<void>;
   GetWorktrees(repositoryId: string): Promise<RepositoryView>;
   CreateWorktree(request: CreateWorktreeRequest): Promise<RepositoryView>;
+  AttachDetachedWorktree(request: AttachDetachedWorktreeRequest): Promise<RepositoryView>;
   RemoveWorktree(request: RemoveWorktreeRequest): Promise<RemoveWorktreeResult>;
   RetryDeleteFolder(request: RetryDeleteFolderRequest): Promise<RetryDeleteFolderResult>;
   OpenInExplorer(path: string): Promise<void>;
@@ -68,6 +70,7 @@ export const backend = {
   selectRepository: (repositoryId: string) => getBackend().SelectRepository(repositoryId),
   getWorktrees: (repositoryId: string) => getBackend().GetWorktrees(repositoryId),
   createWorktree: (request: CreateWorktreeRequest) => getBackend().CreateWorktree(request),
+  attachDetachedWorktree: (request: AttachDetachedWorktreeRequest) => getBackend().AttachDetachedWorktree(request),
   removeWorktree: (request: RemoveWorktreeRequest) => getBackend().RemoveWorktree(request),
   retryDeleteFolder: (request: RetryDeleteFolderRequest) => getBackend().RetryDeleteFolder(request),
   openInExplorer: (path: string) => getBackend().OpenInExplorer(path),

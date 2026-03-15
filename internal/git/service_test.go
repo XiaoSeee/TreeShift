@@ -1,6 +1,10 @@
 package git
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"treeshift/internal/model"
@@ -40,6 +44,31 @@ prunable gitdir file points to non-existent location
 	}
 }
 
+// TestParseWorktreePorcelainMarksDetached 验证 porcelain 解析会正确识别游离 HEAD。
+func TestParseWorktreePorcelainMarksDetached(t *testing.T) {
+	output := `worktree D:\Code\demo
+HEAD abcdef1234567890
+branch refs/heads/main
+
+worktree D:\Code\_worktrees\detached
+HEAD 0123456789abcdef
+detached
+`
+
+	worktrees := ParseWorktreePorcelain(output)
+	if len(worktrees) != 2 {
+		t.Fatalf("解析数量不正确，want=2 got=%d", len(worktrees))
+	}
+
+	if !worktrees[1].IsDetached {
+		t.Fatal("游离 HEAD worktree 未被标记为 detached")
+	}
+
+	if worktrees[1].Branch != "detached" {
+		t.Fatalf("游离 HEAD worktree 展示分支不正确，got=%s", worktrees[1].Branch)
+	}
+}
+
 // TestIsDirtyRemoveError 验证脏目录错误会被正确识别。
 func TestIsDirtyRemoveError(t *testing.T) {
 	if !IsDirtyRemoveError(simpleError("fatal: 'D:/Code/demo' contains modified or untracked files, use --force to delete it")) {
@@ -70,10 +99,193 @@ RD legacy/config.json
 	}
 }
 
+// TestCreateWorktreeDetached 验证 detached 模式会创建游离 HEAD worktree。
+func TestCreateWorktreeDetached(t *testing.T) {
+	service := NewService()
+	repository := createTestRepository(t)
+	targetPath := filepath.Join(t.TempDir(), "detached-worktree")
+
+	if err := service.CreateWorktree(repository, model.CreateWorktreeRequest{
+		Mode:         "detached",
+		SourceBranch: currentBranchName(t, repository.MainWorktreePath),
+		TargetPath:   targetPath,
+	}); err != nil {
+		t.Fatalf("创建 detached worktree 失败：%v", err)
+	}
+
+	worktrees, err := service.ListWorktrees(repository)
+	if err != nil {
+		t.Fatalf("读取 worktree 列表失败：%v", err)
+	}
+
+	targetWorktree, found := findWorktreeByPath(worktrees, targetPath)
+	if !found {
+		t.Fatalf("未找到新创建的 detached worktree：%s", targetPath)
+	}
+	if !targetWorktree.IsDetached {
+		t.Fatal("新创建的 worktree 应处于 detached 状态")
+	}
+}
+
+// TestAttachDetachedWorktreeCreatesBranch 验证游离 HEAD 可以直接创建并切换到新分支。
+func TestAttachDetachedWorktreeCreatesBranch(t *testing.T) {
+	service := NewService()
+	repository := createTestRepository(t)
+	targetPath := filepath.Join(t.TempDir(), "detached-worktree")
+
+	if err := service.CreateWorktree(repository, model.CreateWorktreeRequest{
+		Mode:         "detached",
+		SourceBranch: currentBranchName(t, repository.MainWorktreePath),
+		TargetPath:   targetPath,
+	}); err != nil {
+		t.Fatalf("创建 detached worktree 失败：%v", err)
+	}
+
+	if err := service.AttachDetachedWorktree(repository, model.AttachDetachedWorktreeRequest{
+		Path:       targetPath,
+		Mode:       "new",
+		BranchName: "feature-detached",
+	}); err != nil {
+		t.Fatalf("游离 HEAD 创建新分支失败：%v", err)
+	}
+
+	worktrees, err := service.ListWorktrees(repository)
+	if err != nil {
+		t.Fatalf("读取 worktree 列表失败：%v", err)
+	}
+
+	targetWorktree, found := findWorktreeByPath(worktrees, targetPath)
+	if !found {
+		t.Fatalf("未找到目标 worktree：%s", targetPath)
+	}
+	if targetWorktree.IsDetached {
+		t.Fatal("附着新分支后不应仍处于 detached 状态")
+	}
+	if targetWorktree.Branch != "feature-detached" {
+		t.Fatalf("附着后的分支不正确，got=%s", targetWorktree.Branch)
+	}
+}
+
+// TestAttachDetachedWorktreeSwitchesToFreeBranch 验证游离 HEAD 可以切换到未占用的现有分支。
+func TestAttachDetachedWorktreeSwitchesToFreeBranch(t *testing.T) {
+	service := NewService()
+	repository := createTestRepository(t)
+	targetPath := filepath.Join(t.TempDir(), "detached-worktree")
+	runGitCommand(t, repository.MainWorktreePath, "branch", "feature-free")
+
+	if err := service.CreateWorktree(repository, model.CreateWorktreeRequest{
+		Mode:         "detached",
+		SourceBranch: currentBranchName(t, repository.MainWorktreePath),
+		TargetPath:   targetPath,
+	}); err != nil {
+		t.Fatalf("创建 detached worktree 失败：%v", err)
+	}
+
+	if err := service.AttachDetachedWorktree(repository, model.AttachDetachedWorktreeRequest{
+		Path:       targetPath,
+		Mode:       "existing",
+		BranchName: "feature-free",
+	}); err != nil {
+		t.Fatalf("切换到空闲现有分支失败：%v", err)
+	}
+
+	worktrees, err := service.ListWorktrees(repository)
+	if err != nil {
+		t.Fatalf("读取 worktree 列表失败：%v", err)
+	}
+
+	targetWorktree, found := findWorktreeByPath(worktrees, targetPath)
+	if !found {
+		t.Fatalf("未找到目标 worktree：%s", targetPath)
+	}
+	if targetWorktree.IsDetached {
+		t.Fatal("切换到现有分支后不应仍处于 detached 状态")
+	}
+	if targetWorktree.Branch != "feature-free" {
+		t.Fatalf("切换后的分支不正确，got=%s", targetWorktree.Branch)
+	}
+}
+
+// TestAttachDetachedWorktreeRejectsOccupiedBranch 验证游离 HEAD 切换到已占用分支时会被 Git 拒绝。
+func TestAttachDetachedWorktreeRejectsOccupiedBranch(t *testing.T) {
+	service := NewService()
+	repository := createTestRepository(t)
+	detachedPath := filepath.Join(t.TempDir(), "detached-worktree")
+	busyPath := filepath.Join(t.TempDir(), "busy-worktree")
+	runGitCommand(t, repository.MainWorktreePath, "branch", "feature-busy")
+	runGitCommand(t, repository.MainWorktreePath, "worktree", "add", busyPath, "feature-busy")
+
+	if err := service.CreateWorktree(repository, model.CreateWorktreeRequest{
+		Mode:         "detached",
+		SourceBranch: currentBranchName(t, repository.MainWorktreePath),
+		TargetPath:   detachedPath,
+	}); err != nil {
+		t.Fatalf("创建 detached worktree 失败：%v", err)
+	}
+
+	err := service.AttachDetachedWorktree(repository, model.AttachDetachedWorktreeRequest{
+		Path:       detachedPath,
+		Mode:       "existing",
+		BranchName: "feature-busy",
+	})
+	if err == nil {
+		t.Fatal("切换到已占用分支时应返回错误")
+	}
+	if !strings.Contains(err.Error(), "already used by worktree") {
+		t.Fatalf("错误内容未体现分支已被占用，got=%v", err)
+	}
+}
+
 // simpleError 是测试内使用的极简错误类型。
 type simpleError string
 
 // Error 返回错误文本。
 func (e simpleError) Error() string {
 	return string(e)
+}
+
+// createTestRepository 创建一个最小可用的 Git 仓库绑定。
+//
+// 测试仓库会完成一次初始提交，确保后续 worktree 和 switch 命令可正常执行。
+func createTestRepository(t *testing.T) model.RepositoryBinding {
+	t.Helper()
+
+	repositoryPath := t.TempDir()
+	runGitCommand(t, repositoryPath, "init")
+	if err := os.WriteFile(filepath.Join(repositoryPath, "README.md"), []byte("demo"), 0o644); err != nil {
+		t.Fatalf("写入测试文件失败：%v", err)
+	}
+	runGitCommand(t, repositoryPath, "add", "README.md")
+	runGitCommand(t, repositoryPath, "-c", "user.name=codex", "-c", "user.email=codex@example.com", "commit", "-m", "init")
+
+	return model.RepositoryBinding{
+		ID:               "repo-" + filepath.Base(repositoryPath),
+		DisplayName:      filepath.Base(repositoryPath),
+		SelectedPath:     repositoryPath,
+		MainWorktreePath: repositoryPath,
+		CommonDir:        filepath.Join(repositoryPath, ".git"),
+	}
+}
+
+// currentBranchName 返回测试仓库当前主工作区检出的分支名。
+func currentBranchName(t *testing.T, repositoryPath string) string {
+	t.Helper()
+
+	return strings.TrimSpace(runGitCommand(t, repositoryPath, "branch", "--show-current"))
+}
+
+// runGitCommand 执行测试用 Git 命令，并在失败时输出原始错误。
+//
+// 该辅助方法返回标准输出文本，便于测试直接读取当前分支等单值结果。
+func runGitCommand(t *testing.T, path string, args ...string) string {
+	t.Helper()
+
+	commandArgs := append([]string{"-C", path}, args...)
+	command := exec.Command("git", commandArgs...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Git 命令失败：git %v\n%s", args, string(output))
+	}
+
+	return strings.TrimSpace(string(output))
 }

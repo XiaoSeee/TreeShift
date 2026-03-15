@@ -102,7 +102,9 @@ func (s *Service) ListBranches(repository model.RepositoryBinding) ([]string, er
 
 // CreateWorktree 根据前端请求创建新的 worktree。
 //
-// existing 模式直接检出已有本地分支；new 模式基于 SourceBranch 新建本地分支后创建。
+// detached 模式基于已有本地分支创建游离 HEAD worktree；
+// existing 模式直接检出已有本地分支；
+// new 模式基于 SourceBranch 新建本地分支后创建。
 func (s *Service) CreateWorktree(repository model.RepositoryBinding, request model.CreateWorktreeRequest) error {
 	targetPath := filepath.Clean(strings.TrimSpace(request.TargetPath))
 	if strings.TrimSpace(targetPath) == "" || targetPath == "." {
@@ -114,10 +116,24 @@ func (s *Service) CreateWorktree(repository model.RepositoryBinding, request mod
 	}
 
 	switch request.Mode {
+	case "detached":
+		sourceBranch := strings.TrimSpace(request.SourceBranch)
+		if sourceBranch == "" {
+			return errors.New("请选择游离 HEAD 的来源分支")
+		}
+		if err := s.ensureLocalBranchExists(repository, sourceBranch); err != nil {
+			return err
+		}
+
+		_, err := s.runGit(repository.MainWorktreePath, "worktree", "add", "--detach", targetPath, sourceBranch)
+		return err
 	case "existing":
 		sourceBranch := strings.TrimSpace(request.SourceBranch)
 		if sourceBranch == "" {
 			return errors.New("请选择要检出的现有分支")
+		}
+		if err := s.ensureLocalBranchExists(repository, sourceBranch); err != nil {
+			return err
 		}
 
 		_, err := s.runGit(repository.MainWorktreePath, "worktree", "add", targetPath, sourceBranch)
@@ -127,6 +143,9 @@ func (s *Service) CreateWorktree(repository model.RepositoryBinding, request mod
 		branchName := strings.TrimSpace(request.BranchName)
 		if sourceBranch == "" {
 			return errors.New("请选择新分支的基线分支")
+		}
+		if err := s.ensureLocalBranchExists(repository, sourceBranch); err != nil {
+			return err
 		}
 		if branchName == "" {
 			return errors.New("请输入新分支名称")
@@ -146,6 +165,66 @@ func (s *Service) CreateWorktree(repository model.RepositoryBinding, request mod
 		return err
 	default:
 		return fmt.Errorf("不支持的创建模式：%s", request.Mode)
+	}
+}
+
+// AttachDetachedWorktree 把游离 HEAD worktree 附着到一个分支。
+//
+// existing 模式会切换到已有本地分支；
+// new 模式会基于当前游离 HEAD 创建新分支并切换过去。
+func (s *Service) AttachDetachedWorktree(repository model.RepositoryBinding, request model.AttachDetachedWorktreeRequest) error {
+	targetPath := filepath.Clean(strings.TrimSpace(request.Path))
+	if strings.TrimSpace(request.Path) == "" || targetPath == "." {
+		return errors.New("游离 HEAD Worktree 路径不能为空")
+	}
+
+	worktrees, err := s.listWorktreesByPath(repository.MainWorktreePath)
+	if err != nil {
+		return err
+	}
+
+	targetWorktree, found := findWorktreeByPath(worktrees, targetPath)
+	if !found {
+		return fmt.Errorf("未找到指定 Worktree：%s", request.Path)
+	}
+	if targetWorktree.Status != model.WorktreeStatusNormal {
+		return errors.New("只有正常状态的游离 HEAD Worktree 才能附着分支")
+	}
+	if !targetWorktree.IsDetached {
+		return errors.New("当前 Worktree 并非游离 HEAD 状态")
+	}
+
+	branchName := strings.TrimSpace(request.BranchName)
+	switch request.Mode {
+	case "existing":
+		if branchName == "" {
+			return errors.New("请选择要切换的现有分支")
+		}
+		if err := s.ensureLocalBranchExists(repository, branchName); err != nil {
+			return err
+		}
+
+		_, err = s.runGit(targetWorktree.Path, "switch", branchName)
+		return err
+	case "new":
+		if branchName == "" {
+			return errors.New("请输入新分支名称")
+		}
+		if err := s.validateBranchName(repository, branchName); err != nil {
+			return err
+		}
+		exists, existsErr := s.branchExists(repository, branchName)
+		if existsErr != nil {
+			return existsErr
+		}
+		if exists {
+			return fmt.Errorf("本地分支 %s 已存在", branchName)
+		}
+
+		_, err = s.runGit(targetWorktree.Path, "switch", "-c", branchName)
+		return err
+	default:
+		return fmt.Errorf("不支持的附着模式：%s", request.Mode)
 	}
 }
 
@@ -319,6 +398,22 @@ func (s *Service) branchExists(repository model.RepositoryBinding, branchName st
 	return true, nil
 }
 
+// ensureLocalBranchExists 校验目标本地分支确实存在。
+//
+// 该校验用于把“分支不存在”转换为更直接的业务错误，
+// 避免前端只能看到 Git 原始报错。
+func (s *Service) ensureLocalBranchExists(repository model.RepositoryBinding, branchName string) error {
+	exists, err := s.branchExists(repository, branchName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("未找到本地分支 %s", branchName)
+	}
+
+	return nil
+}
+
 // listWorktreesByPath 以任意工作区路径为入口列出 worktree。
 func (s *Service) listWorktreesByPath(path string) ([]model.WorktreeInfo, error) {
 	output, err := s.runGit(path, "worktree", "list", "--porcelain")
@@ -430,4 +525,19 @@ func shortenBranch(value string) string {
 func stableID(value string) string {
 	sum := sha1.Sum([]byte(value))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+// findWorktreeByPath 根据路径在 worktree 列表中定位目标项。
+//
+// 这里统一使用 filepath.Clean 归一化路径，保证主工作区和链接 worktree
+// 在 Windows 路径大小写或分隔符差异下仍能稳定匹配。
+func findWorktreeByPath(worktrees []model.WorktreeInfo, targetPath string) (model.WorktreeInfo, bool) {
+	cleanTargetPath := filepath.Clean(targetPath)
+	for _, worktree := range worktrees {
+		if strings.EqualFold(filepath.Clean(worktree.Path), cleanTargetPath) {
+			return worktree, true
+		}
+	}
+
+	return model.WorktreeInfo{}, false
 }

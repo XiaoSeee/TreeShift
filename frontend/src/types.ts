@@ -123,10 +123,13 @@ export interface RepositoryView {
 /**
  * CreateMode 定义 worktree 创建模式。
  */
-export type CreateMode = "existing" | "new";
+export type CreateMode = "detached" | "existing" | "new";
 
 /**
  * CreateWorktreeRequest 描述创建 worktree 所需入参。
+ *
+ * `detached` 与 `existing` 模式需要来源分支；
+ * `new` 模式还需要提供新分支名称。
  */
 export interface CreateWorktreeRequest {
   repositoryId: string;
@@ -134,6 +137,21 @@ export interface CreateWorktreeRequest {
   sourceBranch: string;
   branchName: string;
   targetPath: string;
+}
+
+/**
+ * AttachDetachedMode 定义游离 HEAD 附着分支时的操作模式。
+ */
+export type AttachDetachedMode = "existing" | "new";
+
+/**
+ * AttachDetachedWorktreeRequest 描述把游离 HEAD worktree 附着到分支的请求。
+ */
+export interface AttachDetachedWorktreeRequest {
+  repositoryId: string;
+  path: string;
+  mode: AttachDetachedMode;
+  branchName: string;
 }
 
 /**

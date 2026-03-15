@@ -282,6 +282,26 @@ func (a *App) CreateWorktree(request model.CreateWorktreeRequest) (model.Reposit
 	return a.buildRepositoryViewLocked(repository)
 }
 
+// AttachDetachedWorktree 把游离 HEAD worktree 附着到指定分支，并返回最新仓库视图。
+//
+// 该方法只接受正常状态的游离 HEAD worktree。
+// existing 模式切换到已有本地分支，new 模式创建新分支并切换过去。
+func (a *App) AttachDetachedWorktree(request model.AttachDetachedWorktreeRequest) (model.RepositoryView, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	repository, err := a.repositoryByIDLocked(request.RepositoryID)
+	if err != nil {
+		return model.RepositoryView{}, err
+	}
+
+	if err := a.gitService.AttachDetachedWorktree(repository, request); err != nil {
+		return model.RepositoryView{}, err
+	}
+
+	return a.buildRepositoryViewLocked(repository)
+}
+
 // RemoveWorktree 删除一个已存在的 worktree。
 //
 // 该方法先调用 Git 注销，再尝试物理删除目录。

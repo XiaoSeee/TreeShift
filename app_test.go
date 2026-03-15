@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"treeshift/internal/config"
@@ -223,6 +224,56 @@ func TestHandleRemoveWorktreeErrorLockedTreatsDeregisteredPathAsRemoved(t *testi
 	}
 }
 
+// TestAttachDetachedWorktree 验证应用层会把游离 HEAD worktree 附着到新分支并返回最新视图。
+func TestAttachDetachedWorktree(t *testing.T) {
+	configDir := t.TempDir()
+	repository := createTestRepository(t)
+	detachedPath := filepath.Join(configDir, "detached-worktree")
+
+	app := newTestApp(t, configDir, model.Settings{
+		Repositories: []model.RepositoryBinding{repository},
+	})
+
+	createView, err := app.CreateWorktree(model.CreateWorktreeRequest{
+		RepositoryID: repository.ID,
+		Mode:         "detached",
+		SourceBranch: currentBranchName(t, repository.MainWorktreePath),
+		TargetPath:   detachedPath,
+	})
+	if err != nil {
+		t.Fatalf("创建 detached worktree 失败：%v", err)
+	}
+
+	createdWorktree, found := worktreeByPath(createView.Worktrees, detachedPath)
+	if !found {
+		t.Fatalf("未找到新创建的 detached worktree：%s", detachedPath)
+	}
+	if !createdWorktree.IsDetached {
+		t.Fatal("新创建的 worktree 应处于 detached 状态")
+	}
+
+	attachedView, err := app.AttachDetachedWorktree(model.AttachDetachedWorktreeRequest{
+		RepositoryID: repository.ID,
+		Path:         detachedPath,
+		Mode:         "new",
+		BranchName:   "feature-detached-ui",
+	})
+	if err != nil {
+		t.Fatalf("附着 detached worktree 失败：%v", err)
+	}
+
+	attachedWorktree, found := worktreeByPath(attachedView.Worktrees, detachedPath)
+	if !found {
+		t.Fatalf("未找到附着后的 worktree：%s", detachedPath)
+	}
+	if attachedWorktree.IsDetached {
+		t.Fatal("附着后不应仍然是 detached 状态")
+	}
+	if attachedWorktree.Branch != "feature-detached-ui" {
+		t.Fatalf("附着后的分支不正确，got=%s", attachedWorktree.Branch)
+	}
+}
+
 // newTestApp 创建带临时配置目录的测试应用实例。
 func newTestApp(t *testing.T, configDir string, settings model.Settings) *App {
 	t.Helper()
@@ -259,10 +310,31 @@ func createTestRepository(t *testing.T) model.RepositoryBinding {
 	}
 }
 
+// currentBranchName 返回测试仓库当前检出的分支名。
+func currentBranchName(t *testing.T, repositoryPath string) string {
+	t.Helper()
+
+	return strings.TrimSpace(runGitCommandOutput(t, repositoryPath, "branch", "--show-current"))
+}
+
 // runGitCommand 执行测试用 Git 命令。
 func runGitCommand(t *testing.T, path string, args ...string) {
 	t.Helper()
 	runGitCommandWithOptions(t, path, args)
+}
+
+// runGitCommandOutput 执行测试用 Git 命令并返回标准输出文本。
+func runGitCommandOutput(t *testing.T, path string, args ...string) string {
+	t.Helper()
+
+	commandArgs := append([]string{"-C", path}, args...)
+	command := exec.Command("git", commandArgs...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Git 命令失败：git %v\n%s", args, string(output))
+	}
+
+	return string(output)
 }
 
 // runGitCommandWithOptions 执行测试用 Git 命令并在失败时输出原始错误。

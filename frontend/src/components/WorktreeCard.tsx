@@ -6,6 +6,7 @@ import type { ExternalTool, WorktreeInfo } from "../types";
 interface WorktreeCardProps {
   worktree: WorktreeInfo;
   tools: ExternalTool[];
+  onAttachDetached: (worktree: WorktreeInfo) => void;
   onOpenExplorer: (path: string) => void;
   onOpenTerminal: (path: string) => void;
   onLaunchTool: (toolId: string, worktree: WorktreeInfo) => void;
@@ -25,6 +26,7 @@ function hasWorktreeChanges(worktree: WorktreeInfo): boolean {
 export function WorktreeCard({
   worktree,
   tools,
+  onAttachDetached,
   onOpenExplorer,
   onOpenTerminal,
   onLaunchTool,
@@ -51,6 +53,10 @@ export function WorktreeCard({
       : worktree.status === "missing"
         ? "bg-amber-100 text-amber-900"
         : "bg-emerald-100 text-emerald-800";
+  const branchTagTone = worktree.isDetached
+    ? "bg-ember-200 text-ember-900"
+    : "bg-stone-900 text-white";
+  const canAttachDetached = worktree.isDetached && worktree.status === "normal";
   const secondaryActions = tools.length === 0
     ? (
       <span className="rounded-full border border-dashed border-stone-300 px-2 py-1 text-[10px] text-stone-500">
@@ -77,7 +83,19 @@ export function WorktreeCard({
         <div className="space-y-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <span className="tag bg-stone-900 px-2 py-0.5 text-[10px] text-white">{worktree.branch || "未识别分支"}</span>
+              {canAttachDetached ? (
+                <button
+                  className={`tag cursor-pointer border border-transparent px-2 py-0.5 text-[10px] transition hover:border-ember-500 hover:bg-ember-300 ${branchTagTone}`}
+                  onClick={() => onAttachDetached(worktree)}
+                  type="button"
+                >
+                  DETACHED
+                </button>
+              ) : (
+                <span className={`tag px-2 py-0.5 text-[10px] ${branchTagTone}`}>
+                  {worktree.isDetached ? "DETACHED" : worktree.branch || "未识别分支"}
+                </span>
+              )}
               <span className={`tag px-2 py-0.5 text-[10px] ${statusTone}`}>
                 {worktree.status === "pending_cleanup"
                   ? "待清理"
@@ -86,7 +104,6 @@ export function WorktreeCard({
                     : "正常"}
               </span>
               {worktree.isMain ? <span className="tag bg-ember-100 px-2 py-0.5 text-[10px] text-ember-800">主工作区</span> : null}
-              {worktree.isDetached ? <span className="tag bg-stone-200 px-2 py-0.5 text-[10px] text-stone-700">Detached</span> : null}
               <span className="tag bg-stone-100 px-2 py-0.5 text-[10px] text-stone-700">HEAD {worktree.head ? worktree.head.slice(0, 8) : "N/A"}</span>
             </div>
             {shouldShowChangeSummary ? (

@@ -122,13 +122,27 @@ type RepositoryView struct {
 
 // CreateWorktreeRequest 描述创建 worktree 所需的入参。
 //
-// Mode 允许 existing 或 new。new 模式要求同时提供 SourceBranch 与 BranchName。
+// Mode 允许 detached、existing 或 new。
+// detached 与 existing 模式要求提供 SourceBranch，
+// new 模式要求同时提供 SourceBranch 与 BranchName。
 type CreateWorktreeRequest struct {
 	RepositoryID string `json:"repositoryId"`
 	Mode         string `json:"mode"`
 	SourceBranch string `json:"sourceBranch"`
 	BranchName   string `json:"branchName"`
 	TargetPath   string `json:"targetPath"`
+}
+
+// AttachDetachedWorktreeRequest 描述把游离 HEAD worktree 附着到分支的入参。
+//
+// Mode 允许 existing 或 new。
+// existing 模式会切换到一个已有本地分支，
+// new 模式会基于当前游离 HEAD 创建新分支并切换过去。
+type AttachDetachedWorktreeRequest struct {
+	RepositoryID string `json:"repositoryId"`
+	Path         string `json:"path"`
+	Mode         string `json:"mode"`
+	BranchName   string `json:"branchName"`
 }
 
 // RemoveWorktreeRequest 描述删除 worktree 所需的入参。

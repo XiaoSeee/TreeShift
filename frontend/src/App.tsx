@@ -13,7 +13,14 @@ import {
   toSettingsDraft,
   type SettingsDraft,
 } from "./lib/formats";
+import {
+  buildAttachBranchOptions,
+  pickDefaultAttachExistingBranch,
+  resolveCreateBranchFieldLabel,
+  resolveDefaultCreateSourceBranch,
+} from "./lib/worktrees";
 import type {
+  AttachDetachedMode,
   CreateMode,
   EnvironmentStatus,
   RepositorySummary,
@@ -86,6 +93,19 @@ interface CreateDialogState {
 }
 
 /**
+ * AttachDialogState 描述游离 HEAD 附着分支弹窗状态。
+ */
+interface AttachDialogState {
+  open: boolean;
+  worktree: WorktreeInfo | null;
+  mode: AttachDetachedMode;
+  existingBranch: string;
+  newBranchName: string;
+  submitting: boolean;
+  error: string;
+}
+
+/**
  * RemoveDialogState 描述删除确认弹窗状态。
  */
 interface RemoveDialogState {
@@ -114,11 +134,26 @@ function emptyBindDialogState(): BindDialogState {
 function emptyCreateDialogState(): CreateDialogState {
   return {
     open: false,
-    mode: "existing",
+    mode: "detached",
     sourceBranch: "",
     branchName: "",
     targetPath: "",
     targetEdited: false,
+    submitting: false,
+    error: "",
+  };
+}
+
+/**
+ * emptyAttachDialogState 返回默认游离 HEAD 附着弹窗状态。
+ */
+function emptyAttachDialogState(): AttachDialogState {
+  return {
+    open: false,
+    worktree: null,
+    mode: "new",
+    existingBranch: "",
+    newBranchName: "",
     submitting: false,
     error: "",
   };
@@ -241,10 +276,10 @@ function pickInitialRepositoryId(
  * createDialogFromView 根据仓库视图生成创建弹窗默认值。
  */
 function createDialogFromView(view: RepositoryView): CreateDialogState {
-  const sourceBranch = view.availableBranches[0] ?? "";
+  const sourceBranch = resolveDefaultCreateSourceBranch(view);
   return {
     open: true,
-    mode: "existing",
+    mode: "detached",
     sourceBranch,
     branchName: "",
     targetPath: buildSuggestedPath(view.suggestedRoot, sourceBranch || "new-worktree"),
@@ -260,6 +295,20 @@ function createDialogFromView(view: RepositoryView): CreateDialogState {
 function resolveSuggestedTargetPath(view: RepositoryView, mode: CreateMode, sourceBranch: string, branchName: string): string {
   const segment = mode === "new" ? branchName || sourceBranch || "new-worktree" : sourceBranch || branchName || "new-worktree";
   return buildSuggestedPath(view.suggestedRoot, segment);
+}
+
+/**
+ * attachDialogPrimaryActionLabel 返回游离 HEAD 附着弹窗主按钮文案。
+ */
+function attachDialogPrimaryActionLabel(state: AttachDialogState): string {
+  if (state.submitting) {
+    return "处理中…";
+  }
+  if (state.mode === "new") {
+    return "创建并切换";
+  }
+
+  return "切换分支";
 }
 
 /**
@@ -297,6 +346,7 @@ export default function App() {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [bindDialog, setBindDialog] = useState<BindDialogState>(emptyBindDialogState());
   const [createDialog, setCreateDialog] = useState<CreateDialogState>(emptyCreateDialogState());
+  const [attachDialog, setAttachDialog] = useState<AttachDialogState>(emptyAttachDialogState());
   const [removeDialog, setRemoveDialog] = useState<RemoveDialogState>(emptyRemoveDialogState());
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -574,6 +624,91 @@ export default function App() {
   }
 
   /**
+   * openAttachDetachedDialog 打开游离 HEAD 附着分支弹窗。
+   *
+   * 打开时默认落在“创建并切换到新分支”，
+   * 同时预先计算一个可用的现有分支默认值，便于用户随时切换模式。
+   */
+  function openAttachDetachedDialog(worktree: WorktreeInfo) {
+    if (!repositoryView) {
+      return;
+    }
+
+    const options = buildAttachBranchOptions(repositoryView, worktree.path);
+    setAttachDialog({
+      open: true,
+      worktree,
+      mode: "new",
+      existingBranch: pickDefaultAttachExistingBranch(options),
+      newBranchName: "",
+      submitting: false,
+      error: "",
+    });
+  }
+
+  /**
+   * updateAttachDialogMode 切换游离 HEAD 附着弹窗的操作模式。
+   *
+   * 当用户切到“现有分支”模式且尚未选中过目标分支时，
+   * 这里会自动挑选第一个未被其他 worktree 占用的本地分支。
+   */
+  function updateAttachDialogMode(mode: AttachDetachedMode) {
+    if (!repositoryView || !attachDialog.worktree) {
+      return;
+    }
+
+    const options = buildAttachBranchOptions(repositoryView, attachDialog.worktree.path);
+    setAttachDialog((current) => ({
+      ...current,
+      mode,
+      existingBranch: mode === "existing" && !current.existingBranch
+        ? pickDefaultAttachExistingBranch(options)
+        : current.existingBranch,
+      error: "",
+    }));
+  }
+
+  /**
+   * handleAttachDetachedWorktree 提交游离 HEAD 附着分支请求。
+   */
+  async function handleAttachDetachedWorktree(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!activeRepositoryId || !attachDialog.worktree) {
+      return;
+    }
+
+    const currentWorktree = attachDialog.worktree;
+    const currentMode = attachDialog.mode;
+    const targetBranchName = currentMode === "new"
+      ? attachDialog.newBranchName.trim()
+      : attachDialog.existingBranch.trim();
+
+    setAttachDialog((current) => ({ ...current, submitting: true, error: "" }));
+    try {
+      const view = await runWithLoading("正在附着游离 HEAD…", () =>
+        backend.attachDetachedWorktree({
+          repositoryId: activeRepositoryId,
+          path: currentWorktree.path,
+          mode: currentMode,
+          branchName: targetBranchName,
+        }),
+      );
+
+      setRepositoryView(view);
+      setAttachDialog(emptyAttachDialogState());
+      setNotice({
+        tone: "success",
+        message: currentMode === "new"
+          ? `已创建并切换到分支：${targetBranchName}`
+          : `已切换到分支：${targetBranchName}`,
+      });
+      await refreshRepositorySummaryOnly();
+    } catch (error) {
+      setAttachDialog((current) => ({ ...current, submitting: false, error: toErrorMessage(error) }));
+    }
+  }
+
+  /**
    * openRemoveDialog 打开删除确认弹窗。
    */
   function openRemoveDialog(worktree: WorktreeInfo) {
@@ -784,6 +919,13 @@ export default function App() {
   }
 
   const enabledTools = settings?.externalTools.filter((tool) => tool.enabled && tool.command.trim()) ?? [];
+  const attachBranchOptions = repositoryView && attachDialog.worktree
+    ? buildAttachBranchOptions(repositoryView, attachDialog.worktree.path)
+    : [];
+  const attachDialogCanSubmit = attachDialog.mode === "new"
+    ? attachDialog.newBranchName.trim() !== ""
+    : attachDialog.existingBranch.trim() !== "";
+  const hasAttachableExistingBranch = attachBranchOptions.some((option) => !option.disabled);
 
   return (
     <div className="relative h-screen overflow-hidden">
@@ -882,6 +1024,7 @@ export default function App() {
               {repositoryView.worktrees.map((worktree) => (
                 <WorktreeCard
                   key={`${worktree.path}-${worktree.status}`}
+                  onAttachDetached={openAttachDetachedDialog}
                   onLaunchTool={(toolId, targetWorktree) => void handleLaunchTool(toolId, targetWorktree)}
                   onOpenExplorer={(path) =>
                     void backend.openInExplorer(path).catch((error) => setNotice({ tone: "error", message: toErrorMessage(error) }))
@@ -954,7 +1097,7 @@ export default function App() {
       <Modal
         bodyClassName="no-scrollbar px-8 py-4"
         closeButtonClassName="shrink-0 px-3 py-2"
-        description="选择分支后确认目标目录"
+        description="选择创建模式、分支和目标目录"
         descriptionClassName="max-w-none whitespace-nowrap text-[13px] leading-5"
         footer={
           <div className="flex flex-wrap items-center justify-end gap-3">
@@ -998,15 +1141,14 @@ export default function App() {
                 onChange={(event) => updateCreateDialog({ mode: event.target.value as CreateMode })}
                 value={createDialog.mode}
               >
+                <option value="detached">以游离 HEAD 创建</option>
                 <option value="existing">基于现有分支创建</option>
-                <option value="new">创建新分支并创建 Worktree</option>
+                <option value="new">创建新分支并创建</option>
               </select>
             </label>
 
             <label className="create-worktree-field-group">
-              <span className="create-worktree-label">
-                {createDialog.mode === "new" ? "基线分支" : "现有分支"}
-              </span>
+              <span className="create-worktree-label">{resolveCreateBranchFieldLabel(createDialog.mode)}</span>
               <select
                 className="field-shell select-shell create-worktree-field w-full"
                 onChange={(event) => updateCreateDialog({ sourceBranch: event.target.value })}
@@ -1062,6 +1204,128 @@ export default function App() {
           {createDialog.error ? (
             <p className="rounded-2xl border border-rose-200/80 bg-rose-50/80 px-4 py-3 text-sm text-rose-700">
               {createDialog.error}
+            </p>
+          ) : null}
+        </form>
+      </Modal>
+
+      <Modal
+        bodyClassName="no-scrollbar px-8 py-4"
+        closeButtonClassName="shrink-0 px-3 py-2"
+        description="为当前游离 HEAD 选择一个分支归属"
+        descriptionClassName="max-w-none whitespace-nowrap text-[13px] leading-5"
+        footer={
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <button
+              className="ghost-button px-5 py-2.5 text-xs"
+              onClick={() => setAttachDialog(emptyAttachDialogState())}
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              className="primary-button px-5 py-2.5 text-xs"
+              disabled={attachDialog.submitting || !attachDialog.worktree || !attachDialogCanSubmit}
+              onClick={() => {
+                const form = document.getElementById("attach-detached-form");
+                if (form instanceof HTMLFormElement) {
+                  form.requestSubmit();
+                }
+              }}
+              type="button"
+            >
+              {attachDialogPrimaryActionLabel(attachDialog)}
+            </button>
+          </div>
+        }
+        footerClassName="px-8 py-4"
+        headerClassName="px-8 py-5"
+        headerContentClassName="space-y-1.5"
+        onClose={() => setAttachDialog(emptyAttachDialogState())}
+        open={attachDialog.open}
+        panelClassName="max-w-[620px]"
+        title="附着游离 HEAD"
+        titleClassName="leading-none"
+      >
+        <form className="create-worktree-form" id="attach-detached-form" onSubmit={handleAttachDetachedWorktree}>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              className={`rounded-[20px] border px-4 py-3 text-left transition ${
+                attachDialog.mode === "new"
+                  ? "border-ember-400 bg-ember-50 text-ember-900"
+                  : "border-stone-200/80 bg-white/70 text-stone-700 hover:border-ember-300"
+              }`}
+              onClick={() => updateAttachDialogMode("new")}
+              type="button"
+            >
+              <span className="block text-sm font-semibold">创建并切换到新分支</span>
+              <span className="mt-1 block text-xs leading-5 text-stone-600">适合先保留当前游离 HEAD 的提交，再继续开发。</span>
+            </button>
+            <button
+              className={`rounded-[20px] border px-4 py-3 text-left transition ${
+                attachDialog.mode === "existing"
+                  ? "border-ember-400 bg-ember-50 text-ember-900"
+                  : "border-stone-200/80 bg-white/70 text-stone-700 hover:border-ember-300"
+              }`}
+              onClick={() => updateAttachDialogMode("existing")}
+              type="button"
+            >
+              <span className="block text-sm font-semibold">切换到现有分支</span>
+              <span className="mt-1 block text-xs leading-5 text-stone-600">只能切换到当前没有被其他 Worktree 占用的本地分支。</span>
+            </button>
+          </div>
+
+          {attachDialog.mode === "new" ? (
+            <label className="create-worktree-field-group">
+              <span className="create-worktree-label">新分支名称</span>
+              <input
+                className="field-shell create-worktree-field w-full"
+                onChange={(event) =>
+                  setAttachDialog((current) => ({
+                    ...current,
+                    newBranchName: event.target.value,
+                    error: "",
+                  }))
+                }
+                placeholder="例如：feature/detached-recovery"
+                value={attachDialog.newBranchName}
+              />
+            </label>
+          ) : (
+            <label className="create-worktree-field-group">
+              <span className="create-worktree-label">现有分支</span>
+              <select
+                className="field-shell select-shell create-worktree-field w-full"
+                onChange={(event) =>
+                  setAttachDialog((current) => ({
+                    ...current,
+                    existingBranch: event.target.value,
+                    error: "",
+                  }))
+                }
+                value={attachDialog.existingBranch}
+              >
+                <option value="">请选择现有分支</option>
+                {attachBranchOptions.map((option) => (
+                  <option disabled={option.disabled} key={option.branch} value={option.branch}>
+                    {option.disabled ? `${option.branch} · 已被其他 Worktree 占用` : option.branch}
+                  </option>
+                ))}
+              </select>
+              {!hasAttachableExistingBranch ? (
+                <p className="rounded-2xl border border-amber-300/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-900">
+                  当前没有可直接切换的空闲本地分支。你可以改用“创建并切换到新分支”。
+                </p>
+              ) : null}
+              {attachBranchOptions.some((option) => option.disabled) ? (
+                <p className="text-xs leading-5 text-stone-500">灰色分支表示它已被其他 Worktree 检出，Git 不允许直接切换。</p>
+              ) : null}
+            </label>
+          )}
+
+          {attachDialog.error ? (
+            <p className="rounded-2xl border border-rose-200/80 bg-rose-50/80 px-4 py-3 text-sm text-rose-700">
+              {attachDialog.error}
             </p>
           ) : null}
         </form>
