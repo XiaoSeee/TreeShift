@@ -21,19 +21,16 @@ func NewService() *Service {
 	return &Service{}
 }
 
-// Check 扫描 Git、Windows Terminal 与用户配置的外部工具。
+// Check 扫描启动阶段必须依赖的环境项。
 //
-// Git 会直接执行版本命令；Windows Terminal 仅解析可执行文件路径，避免检查时误开窗口。
-func (s *Service) Check(settings model.Settings, warnings []string) model.EnvironmentStatus {
+// 当前启动诊断只检查 Git 与 Windows Terminal；外部 CLI 属于可选能力，
+// 即使在设置中存在预置或用户自定义工具，也不会在软件启动时自动执行环境检查。
+func (s *Service) Check(_ model.Settings, warnings []string) model.EnvironmentStatus {
 	status := model.EnvironmentStatus{
 		Git:           s.checkGit(),
 		Terminal:      s.checkTerminal(),
-		ExternalTools: make([]model.ToolStatus, 0, len(settings.ExternalTools)),
+		ExternalTools: []model.ToolStatus{},
 		Warnings:      append([]string{}, warnings...),
-	}
-
-	for _, tool := range settings.ExternalTools {
-		status.ExternalTools = append(status.ExternalTools, s.checkExternalTool(tool))
 	}
 
 	return status

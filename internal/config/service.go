@@ -98,7 +98,7 @@ func (s *Service) Save(settings model.Settings) error {
 
 // DefaultSettings 返回全新的默认配置。
 //
-// 默认预置一个启用状态的 Codex CLI，方便用户首次启动后直接测试外部工具唤起。
+// 默认预置一个启用状态的 Codex CLI，方便用户首次启动后直接调整或复用外部工具模板。
 func DefaultSettings() model.Settings {
 	return model.Settings{
 		SchemaVersion:       model.SettingsSchemaVersion,

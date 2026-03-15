@@ -8,6 +8,20 @@ import (
 	"treeshift/internal/model"
 )
 
+// TestDefaultSettingsPresetsCodexTool 验证默认配置仍会预置 Codex CLI 模板。
+//
+// 该模板只用于帮助用户快速配置或调整外部工具，不代表启动时一定会执行环境检查。
+func TestDefaultSettingsPresetsCodexTool(t *testing.T) {
+	settings := DefaultSettings()
+
+	if len(settings.ExternalTools) != 1 {
+		t.Fatalf("默认外部工具数量不正确：%v", settings.ExternalTools)
+	}
+	if settings.ExternalTools[0].ID != "tool-codex" {
+		t.Fatalf("默认工具未保留 Codex 预设：%v", settings.ExternalTools)
+	}
+}
+
 // TestSaveAndLoadSettings 验证配置文件可以成功落盘并被完整回读。
 func TestSaveAndLoadSettings(t *testing.T) {
 	tempDir := t.TempDir()

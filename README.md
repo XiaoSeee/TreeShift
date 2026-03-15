@@ -22,6 +22,7 @@ TreeShift 是一个面向 Windows 的 Git worktree 桌面管理器，用来把�
 - Windows 10 / 11
 - Git
 - Windows Terminal
+- 启动默认只检查 Git 和 Windows Terminal，不会检查可选外部 CLI
 - 如果要使用外部工具启动功能，还需要本机已安装对应 CLI，并能从设置中正确配置命令
 
 ## 使用说明
@@ -59,6 +60,8 @@ TreeShift 是一个面向 Windows 的 Git worktree 桌面管理器，用来把�
 ### 4. 配置外部工具
 
 在“设置”中可以添加外部 CLI 工具，例如 Codex CLI。每一行参数都会作为一个独立参数传给命令，支持以下占位符：
+
+首次启动时会预置一个 Codex CLI 模板，方便你直接修改或复用；如果你不使用它，可以在设置中自行调整或删除。
 
 - `{path}`：当前 worktree 的目录
 - `{branch}`：当前 worktree 的分支名
@@ -110,4 +113,3 @@ wails dev
 - 一个仓库下并行处理多个任务
 - 快速切换不同 worktree 的终端环境
 - 将 AI CLI 工具固定拉起到指定 worktree 中工作
-

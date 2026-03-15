@@ -30,7 +30,8 @@ type ToolStatus struct {
 
 // EnvironmentStatus 描述应用整体环境状态。
 //
-// Git 和 Windows Terminal 属于核心依赖，ExternalTools 对应用户在设置页配置的 AI CLI。
+// Git 和 Windows Terminal 属于核心依赖，ExternalTools 预留给可选 CLI 状态，
+// 启动默认诊断不会主动填充该字段。
 type EnvironmentStatus struct {
 	Git           ToolStatus   `json:"git"`
 	Terminal      ToolStatus   `json:"terminal"`

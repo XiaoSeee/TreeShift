@@ -65,7 +65,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-// CheckEnvironment 扫描 Git、Windows Terminal 与外部工具的可用性。
+// CheckEnvironment 扫描启动阶段必须依赖的环境项。
 func (a *App) CheckEnvironment() (model.EnvironmentStatus, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

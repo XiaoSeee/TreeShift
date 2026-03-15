@@ -10,7 +10,7 @@ interface EnvironmentStripProps {
 }
 
 /**
- * EnvironmentStrip 展示 Git、Terminal 和 AI 工具的环境就绪状态。
+ * EnvironmentStrip 展示启动阶段核心依赖的环境异常提示。
  */
 export function EnvironmentStrip({ environment }: EnvironmentStripProps) {
   const [dismissed, setDismissed] = useState(false);
