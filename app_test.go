@@ -128,15 +128,12 @@ func TestRemovePendingCleanupFolderLocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("删除残留目录失败：%v", err)
 	}
-
 	if !result.Success {
 		t.Fatalf("删除残留目录应成功，实际结果：%+v", result)
 	}
-
 	if _, err := os.Stat(leftoverPath); !os.IsNotExist(err) {
 		t.Fatalf("残留目录未被删除：%v", err)
 	}
-
 	if len(app.pendingCleanup) != 0 {
 		t.Fatalf("待清理映射未被清空：%v", app.pendingCleanup)
 	}
@@ -145,7 +142,6 @@ func TestRemovePendingCleanupFolderLocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重新加载配置失败：%v", err)
 	}
-
 	if len(loadedSettings.PendingCleanups) != 0 {
 		t.Fatalf("配置中的待清理记录未被清空：%v", loadedSettings.PendingCleanups)
 	}
@@ -173,7 +169,6 @@ func TestRemoveMissingWorktreeLocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("移除缺失目录 Worktree 失败：%v", err)
 	}
-
 	if !result.Success {
 		t.Fatalf("缺失目录 Worktree 应成功移除：%+v", result)
 	}
@@ -214,11 +209,9 @@ func TestHandleRemoveWorktreeErrorLockedTreatsDeregisteredPathAsRemoved(t *testi
 	if err != nil {
 		t.Fatalf("处理部分成功删除失败：%v", err)
 	}
-
 	if !result.Success {
 		t.Fatalf("Git 记录已移除时应继续走目录收尾，而不是 git_failed：%+v", result)
 	}
-
 	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
 		t.Fatalf("残留目录未被清理：%v", err)
 	}
@@ -271,6 +264,106 @@ func TestAttachDetachedWorktree(t *testing.T) {
 	}
 	if attachedWorktree.Branch != "feature-detached-ui" {
 		t.Fatalf("附着后的分支不正确，got=%s", attachedWorktree.Branch)
+	}
+}
+
+// TestSetWorktreeLock 验证应用层可以切换 linked worktree 的锁定状态并返回最新视图。
+func TestSetWorktreeLock(t *testing.T) {
+	configDir := t.TempDir()
+	repository := createTestRepository(t)
+	targetPath := filepath.Join(configDir, "locked-worktree")
+	runGitCommand(t, repository.MainWorktreePath, "branch", "feature-locked-ui")
+	runGitCommand(t, repository.MainWorktreePath, "worktree", "add", targetPath, "feature-locked-ui")
+
+	app := newTestApp(t, configDir, model.Settings{
+		Repositories: []model.RepositoryBinding{repository},
+	})
+
+	lockedView, err := app.SetWorktreeLock(model.SetWorktreeLockRequest{
+		RepositoryID: repository.ID,
+		Path:         targetPath,
+		Locked:       true,
+	})
+	if err != nil {
+		t.Fatalf("锁定 linked worktree 失败：%v", err)
+	}
+
+	lockedWorktree, found := worktreeByPath(lockedView.Worktrees, targetPath)
+	if !found {
+		t.Fatalf("未找到被锁定的 worktree：%s", targetPath)
+	}
+	if !lockedWorktree.IsLocked {
+		t.Fatal("锁定后的 worktree 未被标记为已锁定")
+	}
+
+	unlockedView, err := app.SetWorktreeLock(model.SetWorktreeLockRequest{
+		RepositoryID: repository.ID,
+		Path:         targetPath,
+		Locked:       false,
+	})
+	if err != nil {
+		t.Fatalf("解锁 linked worktree 失败：%v", err)
+	}
+
+	unlockedWorktree, found := worktreeByPath(unlockedView.Worktrees, targetPath)
+	if !found {
+		t.Fatalf("未找到被解锁的 worktree：%s", targetPath)
+	}
+	if unlockedWorktree.IsLocked {
+		t.Fatal("解锁后的 worktree 仍被标记为已锁定")
+	}
+}
+
+// TestSetWorktreeLockRejectsMainWorktree 验证主工作区不允许切换锁定状态。
+func TestSetWorktreeLockRejectsMainWorktree(t *testing.T) {
+	configDir := t.TempDir()
+	repository := createTestRepository(t)
+
+	app := newTestApp(t, configDir, model.Settings{
+		Repositories: []model.RepositoryBinding{repository},
+	})
+
+	_, err := app.SetWorktreeLock(model.SetWorktreeLockRequest{
+		RepositoryID: repository.ID,
+		Path:         repository.MainWorktreePath,
+		Locked:       true,
+	})
+	if err == nil {
+		t.Fatal("主工作区锁定应被拒绝")
+	}
+	if !strings.Contains(err.Error(), "主工作区") {
+		t.Fatalf("错误内容未体现主工作区限制，got=%v", err)
+	}
+}
+
+// TestRemoveWorktreeRejectsLockedWorktree 验证已锁定的 linked worktree 删除前必须先解锁。
+func TestRemoveWorktreeRejectsLockedWorktree(t *testing.T) {
+	configDir := t.TempDir()
+	repository := createTestRepository(t)
+	targetPath := filepath.Join(configDir, "locked-remove-worktree")
+	runGitCommand(t, repository.MainWorktreePath, "branch", "feature-locked-remove")
+	runGitCommand(t, repository.MainWorktreePath, "worktree", "add", targetPath, "feature-locked-remove")
+	runGitCommand(t, repository.MainWorktreePath, "worktree", "lock", targetPath)
+
+	app := newTestApp(t, configDir, model.Settings{
+		Repositories: []model.RepositoryBinding{repository},
+	})
+
+	result, err := app.RemoveWorktree(model.RemoveWorktreeRequest{
+		RepositoryID: repository.ID,
+		Path:         targetPath,
+	})
+	if err != nil {
+		t.Fatalf("删除已锁定 worktree 时不应返回非业务错误：%v", err)
+	}
+	if result.Success {
+		t.Fatalf("已锁定 worktree 不应被直接删除：%+v", result)
+	}
+	if result.Stage != model.RemoveStageGitFailed {
+		t.Fatalf("已锁定 worktree 的删除阶段不正确，got=%s", result.Stage)
+	}
+	if !strings.Contains(result.Message, "先解锁") {
+		t.Fatalf("错误提示未体现先解锁约束，got=%s", result.Message)
 	}
 }
 

@@ -709,9 +709,48 @@ export default function App() {
   }
 
   /**
+   * handleToggleWorktreeLock 切换当前 worktree 的锁定状态。
+   *
+   * 该操作会直接调用后端执行 Git `worktree lock/unlock`，
+   * 并使用返回的最新仓库视图覆盖前端状态，避免标签与真实状态不同步。
+   */
+  async function handleToggleWorktreeLock(worktree: WorktreeInfo) {
+    if (!activeRepositoryId) {
+      return;
+    }
+
+    try {
+      const nextLocked = !worktree.isLocked;
+      const view = await runWithLoading(nextLocked ? "正在锁定 Worktree..." : "正在解锁 Worktree...", () =>
+        backend.setWorktreeLock({
+          repositoryId: activeRepositoryId,
+          path: worktree.path,
+          locked: nextLocked,
+        }),
+      );
+
+      setRepositoryView(view);
+      setNotice({
+        tone: "success",
+        message: nextLocked
+          ? `已锁定 Worktree：${worktree.branch || worktree.path}`
+          : `已解锁 Worktree：${worktree.branch || worktree.path}`,
+      });
+      await refreshRepositorySummaryOnly();
+    } catch (error) {
+      setNotice({ tone: "error", message: toErrorMessage(error) });
+    }
+  }
+
+  /**
    * openRemoveDialog 打开删除确认弹窗。
    */
   function openRemoveDialog(worktree: WorktreeInfo) {
+    if (worktree.isLocked) {
+      setNotice({ tone: "warning", message: "当前 Worktree 已锁定，请先解锁后再删除。" });
+      return;
+    }
+
     setRemoveDialog({
       open: true,
       worktree,
@@ -1032,6 +1071,7 @@ export default function App() {
                   onOpenTerminal={(path) =>
                     void backend.openInTerminal(path).catch((error) => setNotice({ tone: "error", message: toErrorMessage(error) }))
                   }
+                  onToggleLock={(targetWorktree) => void handleToggleWorktreeLock(targetWorktree)}
                   onRemove={openRemoveDialog}
                   tools={enabledTools}
                   worktree={worktree}

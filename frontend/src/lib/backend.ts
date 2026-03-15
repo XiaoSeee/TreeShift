@@ -10,6 +10,7 @@ import type {
   RepositoryView,
   RetryDeleteFolderRequest,
   RetryDeleteFolderResult,
+  SetWorktreeLockRequest,
   Settings,
 } from "../types";
 
@@ -27,6 +28,7 @@ interface BackendApp {
   GetWorktrees(repositoryId: string): Promise<RepositoryView>;
   CreateWorktree(request: CreateWorktreeRequest): Promise<RepositoryView>;
   AttachDetachedWorktree(request: AttachDetachedWorktreeRequest): Promise<RepositoryView>;
+  SetWorktreeLock(request: SetWorktreeLockRequest): Promise<RepositoryView>;
   RemoveWorktree(request: RemoveWorktreeRequest): Promise<RemoveWorktreeResult>;
   RetryDeleteFolder(request: RetryDeleteFolderRequest): Promise<RetryDeleteFolderResult>;
   OpenInExplorer(path: string): Promise<void>;
@@ -71,6 +73,7 @@ export const backend = {
   getWorktrees: (repositoryId: string) => getBackend().GetWorktrees(repositoryId),
   createWorktree: (request: CreateWorktreeRequest) => getBackend().CreateWorktree(request),
   attachDetachedWorktree: (request: AttachDetachedWorktreeRequest) => getBackend().AttachDetachedWorktree(request),
+  setWorktreeLock: (request: SetWorktreeLockRequest) => getBackend().SetWorktreeLock(request),
   removeWorktree: (request: RemoveWorktreeRequest) => getBackend().RemoveWorktree(request),
   retryDeleteFolder: (request: RetryDeleteFolderRequest) => getBackend().RetryDeleteFolder(request),
   openInExplorer: (path: string) => getBackend().OpenInExplorer(path),

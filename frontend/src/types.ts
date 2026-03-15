@@ -98,6 +98,9 @@ export type WorktreeStatus = "normal" | "missing" | "pending_cleanup";
 
 /**
  * WorktreeInfo 描述单个 worktree 卡片所需的信息。
+ *
+ * `status` 表示目录生命周期状态，`isLocked` 表示 Git 锁定模式；
+ * 二者可以叠加形成“锁定 + 目录缺失”这类组合展示。
  */
 export interface WorktreeInfo {
   path: string;
@@ -105,6 +108,8 @@ export interface WorktreeInfo {
   head: string;
   isMain: boolean;
   isDetached: boolean;
+  isLocked: boolean;
+  lockReason: string;
   status: WorktreeStatus;
   statusMessage: string;
   changeSummary: WorktreeChangeSummary;
@@ -152,6 +157,18 @@ export interface AttachDetachedWorktreeRequest {
   path: string;
   mode: AttachDetachedMode;
   branchName: string;
+}
+
+/**
+ * SetWorktreeLockRequest 描述切换 worktree 锁定状态的请求。
+ *
+ * `locked=true` 表示执行锁定，`locked=false` 表示执行解锁。
+ * 该请求仅适用于仍然存在 Git 记录的 linked worktree。
+ */
+export interface SetWorktreeLockRequest {
+  repositoryId: string;
+  path: string;
+  locked: boolean;
 }
 
 /**

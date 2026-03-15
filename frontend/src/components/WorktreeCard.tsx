@@ -10,6 +10,7 @@ interface WorktreeCardProps {
   onOpenExplorer: (path: string) => void;
   onOpenTerminal: (path: string) => void;
   onLaunchTool: (toolId: string, worktree: WorktreeInfo) => void;
+  onToggleLock: (worktree: WorktreeInfo) => void;
   onRemove: (worktree: WorktreeInfo) => void;
 }
 
@@ -21,7 +22,22 @@ function hasWorktreeChanges(worktree: WorktreeInfo): boolean {
 }
 
 /**
- * WorktreeCard 渲染单个 worktree 的路径、分支、状态和快捷动作。
+ * buildWorktreeDetailMessage 汇总状态说明与锁定原因。
+ *
+ * 状态说明优先保留 Git 或应用层已有提示；
+ * 若 worktree 带有锁定原因，则额外拼接成“锁定原因：...”便于用户理解当前模式。
+ */
+function buildWorktreeDetailMessage(worktree: WorktreeInfo): string {
+  const messages = [
+    worktree.statusMessage.trim(),
+    worktree.lockReason.trim() ? `锁定原因：${worktree.lockReason.trim()}` : "",
+  ].filter((message) => message !== "");
+
+  return messages.join(" · ");
+}
+
+/**
+ * WorktreeCard 渲染单个 worktree 的路径、分支、模式标签与快捷动作。
  */
 export function WorktreeCard({
   worktree,
@@ -30,11 +46,16 @@ export function WorktreeCard({
   onOpenExplorer,
   onOpenTerminal,
   onLaunchTool,
+  onToggleLock,
   onRemove,
 }: WorktreeCardProps) {
   const isUnavailable = worktree.status !== "normal";
-  const canDelete = !worktree.isMain;
+  const canDelete = !worktree.isMain && !worktree.isLocked;
+  const canToggleLock = !worktree.isMain && worktree.status !== "pending_cleanup";
+  const canAttachDetached = worktree.isDetached && worktree.status === "normal";
   const shouldShowChangeSummary = worktree.status === "normal" && hasWorktreeChanges(worktree);
+  const detailMessage = buildWorktreeDetailMessage(worktree);
+
   const cardTone =
     worktree.status === "pending_cleanup"
       ? "border-rose-200/80 bg-rose-50/60"
@@ -47,16 +68,13 @@ export function WorktreeCard({
       : worktree.status === "missing"
         ? "border-amber-200/80 bg-white/75"
         : "border-stone-200/80 bg-white/55";
-  const statusTone =
+  const modeTone = worktree.isLocked ? "bg-sky-100 text-sky-800" : "bg-emerald-100 text-emerald-800";
+  const lifecycleTone =
     worktree.status === "pending_cleanup"
       ? "bg-rose-100 text-rose-700"
-      : worktree.status === "missing"
-        ? "bg-amber-100 text-amber-900"
-        : "bg-emerald-100 text-emerald-800";
-  const branchTagTone = worktree.isDetached
-    ? "bg-ember-200 text-ember-900"
-    : "bg-stone-900 text-white";
-  const canAttachDetached = worktree.isDetached && worktree.status === "normal";
+      : "bg-amber-100 text-amber-900";
+  const branchTagTone = worktree.isDetached ? "bg-ember-200 text-ember-900" : "bg-stone-900 text-white";
+
   const secondaryActions = tools.length === 0
     ? (
       <span className="rounded-full border border-dashed border-stone-300 px-2 py-1 text-[10px] text-stone-500">
@@ -96,16 +114,32 @@ export function WorktreeCard({
                   {worktree.isDetached ? "DETACHED" : worktree.branch || "未识别分支"}
                 </span>
               )}
-              <span className={`tag px-2 py-0.5 text-[10px] ${statusTone}`}>
-                {worktree.status === "pending_cleanup"
-                  ? "待清理"
-                  : worktree.status === "missing"
-                    ? "目录缺失"
-                    : "正常"}
-              </span>
+
+              {canToggleLock ? (
+                <button
+                  className={`tag cursor-pointer border border-transparent px-2 py-0.5 text-[10px] transition hover:border-sky-400/70 hover:brightness-95 ${modeTone}`}
+                  onClick={() => onToggleLock(worktree)}
+                  title={worktree.isLocked ? "点击解锁当前 Worktree" : "点击锁定当前 Worktree"}
+                  type="button"
+                >
+                  {worktree.isLocked ? "锁定" : "正常"}
+                </button>
+              ) : worktree.status !== "pending_cleanup" ? (
+                <span className={`tag px-2 py-0.5 text-[10px] ${modeTone}`}>
+                  {worktree.isLocked ? "锁定" : "正常"}
+                </span>
+              ) : null}
+
+              {worktree.status === "pending_cleanup" ? (
+                <span className={`tag px-2 py-0.5 text-[10px] ${lifecycleTone}`}>待清理</span>
+              ) : worktree.status === "missing" ? (
+                <span className={`tag px-2 py-0.5 text-[10px] ${lifecycleTone}`}>目录缺失</span>
+              ) : null}
+
               {worktree.isMain ? <span className="tag bg-ember-100 px-2 py-0.5 text-[10px] text-ember-800">主工作区</span> : null}
               <span className="tag bg-stone-100 px-2 py-0.5 text-[10px] text-stone-700">HEAD {worktree.head ? worktree.head.slice(0, 8) : "N/A"}</span>
             </div>
+
             {shouldShowChangeSummary ? (
               <div
                 className="worktree-change-pill shrink-0"
@@ -117,6 +151,7 @@ export function WorktreeCard({
               </div>
             ) : null}
           </div>
+
           <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${pathTone}`.trim()}>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-5 text-stone-900" title={worktree.path}>
@@ -140,16 +175,23 @@ export function WorktreeCard({
               >
                 终端
               </button>
-              <button className="ghost-button shrink-0 px-2 py-1 text-[11px]" disabled={!canDelete} onClick={() => onRemove(worktree)} type="button">
+              <button
+                className="ghost-button shrink-0 px-2 py-1 text-[11px]"
+                disabled={!canDelete}
+                onClick={() => onRemove(worktree)}
+                title={worktree.isLocked ? "请先解锁后再删除" : undefined}
+                type="button"
+              >
                 删除
               </button>
               {secondaryActions}
             </div>
           </div>
         </div>
-        {worktree.statusMessage ? (
+
+        {detailMessage ? (
           <p className="mt-2 rounded-xl border border-stone-200/80 bg-white/70 px-3 py-2 text-xs text-stone-700">
-            {worktree.statusMessage}
+            {detailMessage}
           </p>
         ) : null}
       </div>

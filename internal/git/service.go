@@ -228,6 +228,26 @@ func (s *Service) AttachDetachedWorktree(repository model.RepositoryBinding, req
 	}
 }
 
+// SetWorktreeLock 切换 linked worktree 的锁定状态。
+//
+// 当 locked=true 时执行 `git worktree lock`，用于阻止该 worktree 被 Git
+// 视为可清理对象；当 locked=false 时执行 `git worktree unlock`。
+// 该方法只负责调用 Git 命令，不额外处理主工作区或应用层业务约束。
+func (s *Service) SetWorktreeLock(repository model.RepositoryBinding, path string, locked bool) error {
+	cleanPath := filepath.Clean(strings.TrimSpace(path))
+	if strings.TrimSpace(path) == "" || cleanPath == "." {
+		return errors.New("worktree 路径不能为空")
+	}
+
+	if locked {
+		_, err := s.runGit(repository.MainWorktreePath, "worktree", "lock", cleanPath)
+		return err
+	}
+
+	_, err := s.runGit(repository.MainWorktreePath, "worktree", "unlock", cleanPath)
+	return err
+}
+
 // RemoveWorktree 调用 Git 注销某个 worktree。
 //
 // 该方法只负责 Git 层面的 remove，不负责物理目录删除。
@@ -319,9 +339,8 @@ func ParseWorktreePorcelain(output string) []model.WorktreeInfo {
 			}
 			hasEntry = true
 		case "locked":
-			if strings.TrimSpace(value) != "" {
-				current.StatusMessage = strings.TrimSpace(value)
-			}
+			current.IsLocked = true
+			current.LockReason = strings.TrimSpace(value)
 			hasEntry = true
 		default:
 			// 这里保留对未知字段的兼容性，当前版本无需处理。

@@ -302,6 +302,46 @@ func (a *App) AttachDetachedWorktree(request model.AttachDetachedWorktreeRequest
 	return a.buildRepositoryViewLocked(repository)
 }
 
+// SetWorktreeLock 切换指定 linked worktree 的锁定状态，并返回最新仓库视图。
+//
+// 该方法只接受仍然保留 Git 记录的 linked worktree；主工作区和
+// `pending_cleanup` 虚拟卡片都不允许切换锁定状态。锁定失败时会直接返回
+// Git 原始错误，便于前端提示用户先修正当前仓库状态。
+func (a *App) SetWorktreeLock(request model.SetWorktreeLockRequest) (model.RepositoryView, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	repository, err := a.repositoryByIDLocked(request.RepositoryID)
+	if err != nil {
+		return model.RepositoryView{}, err
+	}
+
+	viewBefore, err := a.buildRepositoryViewLocked(repository)
+	if err != nil {
+		return model.RepositoryView{}, err
+	}
+
+	targetWorktree, found := worktreeByPath(viewBefore.Worktrees, request.Path)
+	if !found {
+		return model.RepositoryView{}, fmt.Errorf("未找到指定 Worktree：%s", request.Path)
+	}
+	if targetWorktree.Status == model.WorktreeStatusPendingCleanup {
+		return model.RepositoryView{}, errors.New("待清理目录不支持锁定或解锁")
+	}
+	if targetWorktree.IsMain {
+		return model.RepositoryView{}, errors.New("主工作区不支持锁定或解锁")
+	}
+	if targetWorktree.IsLocked == request.Locked {
+		return viewBefore, nil
+	}
+
+	if err := a.gitService.SetWorktreeLock(repository, request.Path, request.Locked); err != nil {
+		return model.RepositoryView{}, err
+	}
+
+	return a.buildRepositoryViewLocked(repository)
+}
+
 // RemoveWorktree 删除一个已存在的 worktree。
 //
 // 该方法先调用 Git 注销，再尝试物理删除目录。
@@ -331,6 +371,14 @@ func (a *App) RemoveWorktree(request model.RemoveWorktreeRequest) (model.RemoveW
 
 	if targetWorktree.Status == model.WorktreeStatusMissing {
 		return a.removeMissingWorktreeLocked(repository, targetWorktree)
+	}
+	if targetWorktree.IsLocked {
+		return model.RemoveWorktreeResult{
+			Success: false,
+			Stage:   model.RemoveStageGitFailed,
+			Message: "当前 Worktree 已锁定，请先解锁后再删除。",
+			View:    viewBefore,
+		}, nil
 	}
 
 	removeErr := a.gitService.RemoveWorktree(repository, request.Path, request.Force)

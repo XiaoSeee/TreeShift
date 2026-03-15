@@ -100,13 +100,17 @@ type WorktreeChangeSummary struct {
 
 // WorktreeInfo 描述单个 worktree 的展示状态。
 //
-// Status 和 StatusMessage 同时覆盖 Git 正常 worktree 与“待清理”虚拟项。
+// Status 和 StatusMessage 同时覆盖 Git 正常 worktree 与“待清理”虚拟项；
+// IsLocked 和 LockReason 则单独表达 Git `worktree lock` 模式，
+// 允许界面同时展示“锁定 + 目录缺失”这类组合状态。
 type WorktreeInfo struct {
 	Path          string                `json:"path"`
 	Branch        string                `json:"branch"`
 	Head          string                `json:"head"`
 	IsMain        bool                  `json:"isMain"`
 	IsDetached    bool                  `json:"isDetached"`
+	IsLocked      bool                  `json:"isLocked"`
+	LockReason    string                `json:"lockReason"`
 	Status        string                `json:"status"`
 	StatusMessage string                `json:"statusMessage"`
 	ChangeSummary WorktreeChangeSummary `json:"changeSummary"`
@@ -143,6 +147,16 @@ type AttachDetachedWorktreeRequest struct {
 	Path         string `json:"path"`
 	Mode         string `json:"mode"`
 	BranchName   string `json:"branchName"`
+}
+
+// SetWorktreeLockRequest 描述切换 worktree 锁定状态的请求。
+//
+// Locked=true 表示执行 `git worktree lock`，Locked=false 表示执行
+// `git worktree unlock`。该请求仅适用于仍然存在 Git 记录的 linked worktree。
+type SetWorktreeLockRequest struct {
+	RepositoryID string `json:"repositoryId"`
+	Path         string `json:"path"`
+	Locked       bool   `json:"locked"`
 }
 
 // RemoveWorktreeRequest 描述删除 worktree 所需的入参。

@@ -34,6 +34,7 @@ function findMainWorktree(worktrees: WorktreeInfo[]): WorktreeInfo | undefined {
  *
  * 只有 Git 记录仍存在且当前不是 detached 的 worktree 才会占用分支；
  * `pending_cleanup` 是应用内虚拟卡片，Git 记录已移除，因此不占用分支。
+ * 锁定或目录缺失不会改变 Git 分支占用语义，只要 Git 记录仍在就继续视为占用。
  */
 function canOccupyBranch(status: WorktreeStatus, isDetached: boolean): boolean {
   if (status === "pending_cleanup") {
