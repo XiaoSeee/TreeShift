@@ -6,6 +6,7 @@ cd /d "%~dp0"
 set "APP_NAME=TreeShift"
 set "OUTPUT_PATH=%CD%\build\bin\TreeShift.exe"
 set "ROOT_OUTPUT_PATH=%CD%\TreeShift.exe"
+set "BUILD_ARGS=-s -clean"
 
 echo [INFO] Building %APP_NAME%...
 
@@ -21,7 +22,7 @@ if errorlevel 1 goto :failed
 call :ensure_frontend_dependencies
 if errorlevel 1 goto :failed
 
-call :ensure_frontend_dist
+call :rebuild_frontend_dist
 if errorlevel 1 goto :failed
 
 echo [STEP] Running Go tests...
@@ -31,19 +32,11 @@ if errorlevel 1 (
   goto :failed
 )
 
-echo [STEP] Running: wails build
-wails build
+echo [STEP] Running: wails build %BUILD_ARGS%
+wails build %BUILD_ARGS%
 if not errorlevel 1 goto :check_output
 
-echo [WARN] Standard build failed.
-if exist "frontend\dist\index.html" (
-  echo [STEP] Running fallback: wails build -s
-  wails build -s
-  if not errorlevel 1 goto :check_output
-  echo [ERROR] Fallback build failed.
-) else (
-  echo [ERROR] frontend\dist\index.html not found. Fallback build is unavailable.
-)
+echo [ERROR] Build command failed.
 
 goto :failed
 
@@ -69,8 +62,15 @@ if errorlevel 1 (
 popd
 exit /b 0
 
-:ensure_frontend_dist
-if exist "frontend\dist\index.html" exit /b 0
+:rebuild_frontend_dist
+if exist "frontend\dist" (
+  echo [STEP] Cleaning stale frontend\\dist...
+  rmdir /s /q "frontend\dist"
+  if errorlevel 1 (
+    echo [ERROR] Failed to clean frontend\dist.
+    exit /b 1
+  )
+)
 
 echo [STEP] Building frontend assets for Go embed...
 pushd "frontend"
