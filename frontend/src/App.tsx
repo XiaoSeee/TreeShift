@@ -826,7 +826,7 @@ export default function App() {
         <section className="glass-panel px-3 py-2.5">
           <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto whitespace-nowrap">
             <label className="shrink-0 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">当前仓库</label>
-            <select className="field-shell min-w-[220px] flex-1 px-3 py-1.5 text-xs" onChange={handleRepositoryChange} value={activeRepositoryId}>
+                <select className="field-shell select-shell min-w-[220px] flex-1 py-1.5 pl-3 pr-10 text-xs" onChange={handleRepositoryChange} value={activeRepositoryId}>
               <option value="">请选择已绑定仓库</option>
               {repositories.map((repository) => (
                 <option key={repository.id} value={repository.id}>
@@ -900,7 +900,11 @@ export default function App() {
       </main>
 
       <Modal
-        description="支持拖入目录、直接粘贴路径或调用原生目录选择器。后端会自动解析 common dir，避免同一仓库重复绑定。"
+        bodyClassName="px-8 py-4"
+        bodyScrollable={false}
+        closeButtonClassName="shrink-0 px-3 py-2"
+        description="拖入目录或选择本地仓库"
+        descriptionClassName="max-w-none whitespace-nowrap text-[13px] leading-5"
         footer={
           <div className="flex flex-wrap justify-end gap-3">
             <button className="ghost-button" onClick={() => setBindDialog(emptyBindDialogState())} type="button">
@@ -911,10 +915,14 @@ export default function App() {
             </button>
           </div>
         }
+        footerClassName="px-8 py-4"
+        headerClassName="px-8 py-5"
+        headerContentClassName="space-y-1.5"
         onClose={() => setBindDialog(emptyBindDialogState())}
         open={bindDialog.open}
         panelClassName="max-w-[620px]"
         title="绑定主 Git 仓库"
+        titleClassName="leading-none"
       >
         <form className="space-y-4" onSubmit={handleBindRepository}>
           <div
@@ -944,14 +952,21 @@ export default function App() {
       </Modal>
 
       <Modal
-        description="先选择现有分支或基线分支，再确认输出目录。默认目录会基于建议根路径和分支名自动生成。"
+        bodyClassName="no-scrollbar px-8 py-4"
+        closeButtonClassName="shrink-0 px-3 py-2"
+        description="选择分支后确认目标目录"
+        descriptionClassName="max-w-none whitespace-nowrap text-[13px] leading-5"
         footer={
-          <div className="flex flex-wrap justify-end gap-3">
-            <button className="ghost-button" onClick={() => setCreateDialog(emptyCreateDialogState())} type="button">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <button
+              className="ghost-button px-5 py-2.5 text-xs"
+              onClick={() => setCreateDialog(emptyCreateDialogState())}
+              type="button"
+            >
               取消
             </button>
             <button
-              className="primary-button"
+              className="primary-button px-5 py-2.5 text-xs"
               disabled={createDialog.submitting || !repositoryView}
               onClick={() => {
                 const form = document.getElementById("create-worktree-form");
@@ -965,16 +980,21 @@ export default function App() {
             </button>
           </div>
         }
+        footerClassName="px-8 py-4"
+        headerClassName="px-8 py-5"
+        headerContentClassName="space-y-1.5"
         onClose={() => setCreateDialog(emptyCreateDialogState())}
         open={createDialog.open}
+        panelClassName="max-w-[620px]"
         title="创建 Worktree"
+        titleClassName="leading-none"
       >
-        <form className="space-y-5" id="create-worktree-form" onSubmit={handleCreateWorktree}>
-          <div className="grid gap-5 md:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-sm font-medium text-stone-700">创建模式</span>
+        <form className="create-worktree-form" id="create-worktree-form" onSubmit={handleCreateWorktree}>
+          <div className="create-worktree-grid">
+            <label className="create-worktree-field-group">
+              <span className="create-worktree-label">创建模式</span>
               <select
-                className="field-shell w-full"
+                className="field-shell select-shell create-worktree-field w-full"
                 onChange={(event) => updateCreateDialog({ mode: event.target.value as CreateMode })}
                 value={createDialog.mode}
               >
@@ -983,12 +1003,12 @@ export default function App() {
               </select>
             </label>
 
-            <label className="space-y-2">
-              <span className="text-sm font-medium text-stone-700">
+            <label className="create-worktree-field-group">
+              <span className="create-worktree-label">
                 {createDialog.mode === "new" ? "基线分支" : "现有分支"}
               </span>
               <select
-                className="field-shell w-full"
+                className="field-shell select-shell create-worktree-field w-full"
                 onChange={(event) => updateCreateDialog({ sourceBranch: event.target.value })}
                 value={createDialog.sourceBranch}
               >
@@ -1003,10 +1023,10 @@ export default function App() {
           </div>
 
           {createDialog.mode === "new" ? (
-            <label className="space-y-2">
-              <span className="text-sm font-medium text-stone-700">新分支名称</span>
+            <label className="create-worktree-field-group">
+              <span className="create-worktree-label">新分支名称</span>
               <input
-                className="field-shell w-full"
+                className="field-shell create-worktree-field w-full"
                 onChange={(event) => updateCreateDialog({ branchName: event.target.value })}
                 placeholder="例如：feature/worktree-manager"
                 value={createDialog.branchName}
@@ -1014,11 +1034,11 @@ export default function App() {
             </label>
           ) : null}
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-stone-700">目标目录</label>
-            <div className="flex flex-col gap-3 md:flex-row">
+          <div className="create-worktree-field-group">
+            <label className="create-worktree-label">目标目录</label>
+            <div className="create-worktree-path-row">
               <input
-                className="field-shell min-w-0 flex-1"
+                className="field-shell create-worktree-field min-w-0 flex-1"
                 onChange={(event) =>
                   setCreateDialog((current) => ({
                     ...current,
@@ -1029,16 +1049,21 @@ export default function App() {
                 }
                 value={createDialog.targetPath}
               />
-              <button className="ghost-button" onClick={() => void handleBrowseForCreatePath()} type="button">
+              <button
+                className="ghost-button create-worktree-browse-button"
+                onClick={() => void handleBrowseForCreatePath()}
+                type="button"
+              >
                 浏览目录
               </button>
             </div>
-            <p className="text-xs text-stone-500">
-              当前建议根目录：{repositoryView?.suggestedRoot ?? "未计算"}。手动修改后，分支变化将不再自动覆盖目标路径。
-            </p>
           </div>
 
-          {createDialog.error ? <p className="text-sm text-rose-700">{createDialog.error}</p> : null}
+          {createDialog.error ? (
+            <p className="rounded-2xl border border-rose-200/80 bg-rose-50/80 px-4 py-3 text-sm text-rose-700">
+              {createDialog.error}
+            </p>
+          ) : null}
         </form>
       </Modal>
 
@@ -1069,11 +1094,14 @@ export default function App() {
       </Modal>
 
       <Modal
-        description="所有配置都以 JSON 存储在可执行文件同级目录。工具参数请按“一行一个参数”填写，支持 {path} 和 {branch} 占位符。"
+        bodyClassName="no-scrollbar px-8 py-4"
+        closeButtonClassName="shrink-0 px-3 py-2"
+        description="统一管理默认路径和外部工具"
+        descriptionClassName="max-w-none whitespace-nowrap text-[13px] leading-5"
         footer={
           <div className="flex flex-wrap justify-end gap-3">
             <button
-              className="ghost-button"
+              className="ghost-button px-5 py-2.5 text-xs"
               onClick={() => {
                 setSettingsOpen(false);
                 setSettingsDraft(null);
@@ -1082,18 +1110,27 @@ export default function App() {
             >
               取消
             </button>
-            <button className="primary-button" disabled={settingsBusy || !settingsDraft} onClick={() => void handleSaveSettings()} type="button">
+            <button
+              className="primary-button px-5 py-2.5 text-xs"
+              disabled={settingsBusy || !settingsDraft}
+              onClick={() => void handleSaveSettings()}
+              type="button"
+            >
               {settingsBusy ? "保存中…" : "保存设置"}
             </button>
           </div>
         }
+        footerClassName="px-8 py-4"
+        headerClassName="px-8 py-5"
+        headerContentClassName="space-y-1.5"
         onClose={() => {
           setSettingsOpen(false);
           setSettingsDraft(null);
         }}
         open={settingsOpen}
-        panelClassName="max-w-[760px]"
+        panelClassName="max-w-[620px]"
         title="设置"
+        titleClassName="leading-none"
       >
         {settingsDraft ? (
           <div className="space-y-6">
