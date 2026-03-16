@@ -551,9 +551,8 @@ func stableID(value string) string {
 // 这里统一使用 filepath.Clean 归一化路径，保证主工作区和链接 worktree
 // 在 Windows 路径大小写或分隔符差异下仍能稳定匹配。
 func findWorktreeByPath(worktrees []model.WorktreeInfo, targetPath string) (model.WorktreeInfo, bool) {
-	cleanTargetPath := filepath.Clean(targetPath)
 	for _, worktree := range worktrees {
-		if strings.EqualFold(filepath.Clean(worktree.Path), cleanTargetPath) {
+		if PathsEqual(worktree.Path, targetPath) {
 			return worktree, true
 		}
 	}

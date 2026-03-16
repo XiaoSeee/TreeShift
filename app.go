@@ -411,11 +411,11 @@ func (a *App) RetryDeleteFolder(request model.RetryDeleteFolderRequest) (model.R
 	}
 
 	if err := a.deleteFolderLocked(request.Path); err != nil {
-		entry := a.pendingCleanup[filepath.Clean(request.Path)]
+		entry := a.pendingCleanup[git.PathKey(request.Path)]
 		entry.RepositoryID = repository.ID
 		entry.Path = filepath.Clean(request.Path)
 		entry.LastError = err.Error()
-		a.pendingCleanup[filepath.Clean(request.Path)] = entry
+		a.pendingCleanup[git.PathKey(request.Path)] = entry
 		if saveErr := a.saveCurrentSettingsLocked(); saveErr != nil {
 			return model.RetryDeleteFolderResult{}, saveErr
 		}
@@ -432,7 +432,7 @@ func (a *App) RetryDeleteFolder(request model.RetryDeleteFolderRequest) (model.R
 		}, nil
 	}
 
-	delete(a.pendingCleanup, filepath.Clean(request.Path))
+	delete(a.pendingCleanup, git.PathKey(request.Path))
 	if err := a.saveCurrentSettingsLocked(); err != nil {
 		return model.RetryDeleteFolderResult{}, err
 	}
@@ -514,7 +514,7 @@ func (a *App) buildRepositoryViewLocked(repository model.RepositoryBinding) (mod
 	merged := append([]model.WorktreeInfo{}, worktrees...)
 	existing := map[string]struct{}{}
 	for _, worktree := range worktrees {
-		existing[filepath.Clean(worktree.Path)] = struct{}{}
+		existing[git.PathKey(worktree.Path)] = struct{}{}
 	}
 
 	for _, cleanup := range a.pendingCleanup {
@@ -522,7 +522,7 @@ func (a *App) buildRepositoryViewLocked(repository model.RepositoryBinding) (mod
 			continue
 		}
 
-		if _, found := existing[filepath.Clean(cleanup.Path)]; found {
+		if _, found := existing[git.PathKey(cleanup.Path)]; found {
 			continue
 		}
 
@@ -629,7 +629,7 @@ func suggestedRootPath(repository model.RepositoryBinding, globalDefault string)
 // 该分支不会再调用 Git，只负责把残留目录从磁盘和持久化待清理列表中移除。
 func (a *App) removePendingCleanupFolderLocked(repository model.RepositoryBinding, worktree model.WorktreeInfo) (model.RemoveWorktreeResult, error) {
 	if err := a.deleteFolderLocked(worktree.Path); err != nil {
-		entry := a.pendingCleanup[filepath.Clean(worktree.Path)]
+		entry := a.pendingCleanup[git.PathKey(worktree.Path)]
 		entry.RepositoryID = repository.ID
 		entry.Path = filepath.Clean(worktree.Path)
 		if strings.TrimSpace(entry.Branch) == "" {
@@ -639,7 +639,7 @@ func (a *App) removePendingCleanupFolderLocked(repository model.RepositoryBindin
 			entry.Head = worktree.Head
 		}
 		entry.LastError = err.Error()
-		a.pendingCleanup[filepath.Clean(worktree.Path)] = entry
+		a.pendingCleanup[git.PathKey(worktree.Path)] = entry
 		if saveErr := a.saveCurrentSettingsLocked(); saveErr != nil {
 			return model.RemoveWorktreeResult{}, saveErr
 		}
@@ -657,7 +657,7 @@ func (a *App) removePendingCleanupFolderLocked(repository model.RepositoryBindin
 		}, nil
 	}
 
-	delete(a.pendingCleanup, filepath.Clean(worktree.Path))
+	delete(a.pendingCleanup, git.PathKey(worktree.Path))
 	if err := a.saveCurrentSettingsLocked(); err != nil {
 		return model.RemoveWorktreeResult{}, err
 	}
@@ -687,7 +687,7 @@ func (a *App) removeMissingWorktreeLocked(repository model.RepositoryBinding, wo
 		}, nil
 	}
 
-	delete(a.pendingCleanup, filepath.Clean(worktree.Path))
+	delete(a.pendingCleanup, git.PathKey(worktree.Path))
 	if err := a.saveCurrentSettingsLocked(); err != nil {
 		return model.RemoveWorktreeResult{}, err
 	}
@@ -739,7 +739,7 @@ func (a *App) finalizeRemovedWorktreeLocked(
 	path string,
 ) (model.RemoveWorktreeResult, error) {
 	if err := a.deleteFolderLocked(path); err != nil {
-		a.pendingCleanup[filepath.Clean(path)] = model.PendingCleanup{
+		a.pendingCleanup[git.PathKey(path)] = model.PendingCleanup{
 			RepositoryID: repository.ID,
 			Path:         filepath.Clean(path),
 			Branch:       worktree.Branch,
@@ -763,7 +763,7 @@ func (a *App) finalizeRemovedWorktreeLocked(
 		}, nil
 	}
 
-	delete(a.pendingCleanup, filepath.Clean(path))
+	delete(a.pendingCleanup, git.PathKey(path))
 	if err := a.saveCurrentSettingsLocked(); err != nil {
 		return model.RemoveWorktreeResult{}, err
 	}
@@ -785,8 +785,8 @@ func (a *App) finalizeRemovedWorktreeLocked(
 // 若发现待清理目录已经不存在，则会同步移除持久化记录，避免刷新后继续显示失效卡片。
 func (a *App) reconcilePendingCleanupsLocked() error {
 	changed := false
-	for cleanupPath := range a.pendingCleanup {
-		if _, err := os.Stat(cleanupPath); err == nil {
+	for cleanupPath, cleanup := range a.pendingCleanup {
+		if _, err := os.Stat(cleanup.Path); err == nil {
 			continue
 		} else if os.IsNotExist(err) {
 			delete(a.pendingCleanup, cleanupPath)
@@ -819,7 +819,7 @@ func pendingCleanupMapFromSlice(cleanups []model.PendingCleanup) map[string]mode
 		}
 
 		cleanup.Path = cleanPath
-		result[cleanPath] = cleanup
+		result[git.PathKey(cleanPath)] = cleanup
 	}
 
 	return result
@@ -843,9 +843,8 @@ func pendingCleanupSlice(cleanups map[string]model.PendingCleanup) []model.Pendi
 
 // worktreeByPath 根据物理路径从当前视图中查找目标卡片。
 func worktreeByPath(worktrees []model.WorktreeInfo, path string) (model.WorktreeInfo, bool) {
-	cleanPath := filepath.Clean(path)
 	for _, worktree := range worktrees {
-		if filepath.Clean(worktree.Path) == cleanPath {
+		if git.PathsEqual(worktree.Path, path) {
 			return worktree, true
 		}
 	}
