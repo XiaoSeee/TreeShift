@@ -37,6 +37,8 @@ Go 代码统一交给 `gofmt`，包名保持小写短名，导出标识符使用
 ## 测试约定
 Go 测试文件命名为 `*_test.go`，前端测试命名为 `*.test.ts`，当前使用 Vitest + `jsdom`。提交前至少覆盖你改动涉及的成功路径、错误路径和边界条件；只改格式化或路径处理逻辑时，优先补充 `frontend/src/lib/` 或对应 `internal/` 包下的单元测试。仓库没有单独覆盖率门槛，但不要在无测试的情况下合并行为变更。
 
+在当前 Codex CLI 运行环境中，Vitest 启动阶段会被 esbuild 的子进程权限限制卡住，报错为 `spawn EPERM`。遇到该问题时，不要反复重试 `npm.cmd test`；优先改用 `node .\node_modules\typescript\bin\tsc -b --pretty false` 做前端类型与编译检查，并在回复中明确说明 Vitest 未能执行的原因。
+
 如果修改了删除流程、配置归一化、外部工具参数展开、Windows Terminal 启动、PowerShell 命令拼接或 worktree 状态解析，默认应补对应单元测试。涉及 `pending_cleanup`、缺失目录、脏目录强删确认的变更时，测试应覆盖成功路径和失败路径，而不是只测 happy path。
 
 ## 提交与 Pull Request 约定
