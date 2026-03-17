@@ -1,4 +1,13 @@
-import { fromSettingsDraft, argsToText, buildSuggestedPath, sanitizePathSegment, textToArgs, toSettingsDraft } from "./formats";
+import {
+  areSettingsDraftsEqual,
+  fromSettingsDraft,
+  argsToText,
+  buildSuggestedPath,
+  ensureRepositoryDisplayName,
+  sanitizePathSegment,
+  textToArgs,
+  toSettingsDraft,
+} from "./formats";
 import type { Settings } from "../types";
 
 /**
@@ -63,5 +72,51 @@ describe("formats", () => {
     const restored = fromSettingsDraft(draft);
     expect(restored.launchScript).toEqual(settings.launchScript);
     expect(restored.externalTools[0].args).toEqual(["--model", "gpt-5"]);
+  });
+
+  /**
+   * it 应能判断设置草稿是否已经发生未保存改动。
+   */
+  it("会识别设置草稿是否存在未保存修改", () => {
+    const settings: Settings = {
+      schemaVersion: 3,
+      repositories: [],
+      defaultWorktreeRoot: "D:\\Worktrees",
+      externalTools: [],
+      launchScript: {
+        powerShellScript: "",
+        applyToTerminal: false,
+        applyToExternalTools: false,
+      },
+      pendingCleanups: [],
+      uiPreferences: {
+        lastSelectedRepositoryId: "",
+      },
+    };
+
+    const baseline = toSettingsDraft(settings);
+    const changedDraft = {
+      ...baseline,
+      defaultWorktreeRoot: "D:\\OtherWorktrees",
+    };
+
+    expect(areSettingsDraftsEqual(baseline, toSettingsDraft(settings))).toBe(true);
+    expect(areSettingsDraftsEqual(baseline, changedDraft)).toBe(false);
+  });
+
+  /**
+   * it 应在仓库显示名为空时回退到主工作区目录名。
+   */
+  it("会为缺失的仓库显示名补齐默认值", () => {
+    const repository = ensureRepositoryDisplayName({
+      id: "repo-1",
+      displayName: "   ",
+      selectedPath: "D:\\Code\\example",
+      mainWorktreePath: "D:\\Code\\example",
+      commonDir: "D:\\Code\\example\\.git",
+      defaultWorktreeRoot: "",
+    });
+
+    expect(repository.displayName).toBe("example");
   });
 });

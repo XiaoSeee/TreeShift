@@ -1,18 +1,13 @@
-import type { CSSProperties, ChangeEvent, FormEvent } from "react";
+﻿import type { CSSProperties, ChangeEvent, FormEvent } from "react";
 import { useEffect, useState } from "react";
 
 import { EnvironmentStrip } from "./components/EnvironmentStrip";
 import { Modal } from "./components/Modal";
+import { SettingsPage } from "./components/SettingsPage";
 import { WorktreeCard } from "./components/WorktreeCard";
 import { backend } from "./lib/backend";
-import {
-  buildSuggestedPath,
-  createEmptyToolDraft,
-  ensureRepositoryDisplayName,
-  fromSettingsDraft,
-  toSettingsDraft,
-  type SettingsDraft,
-} from "./lib/formats";
+import { buildSuggestedPath } from "./lib/formats";
+import { deriveWorkspaceSnapshotFromSettings, pickActiveRepositoryId } from "./lib/settings-state";
 import {
   buildAttachBranchOptions,
   pickDefaultAttachExistingBranch,
@@ -41,6 +36,11 @@ interface NoticeState {
   tone: NoticeTone;
   message: string;
 }
+
+/**
+ * AppPage 描述应用当前展示的是工作区还是设置页。
+ */
+type AppPage = "workspace" | "settings";
 
 /**
  * WailsRuntime 描述当前页面真正用到的 Wails runtime 拖拽接口。
@@ -253,26 +253,6 @@ function removeDialogTargetText(worktree: WorktreeInfo | null): string {
 }
 
 /**
- * pickInitialRepositoryId 选择当前应展示的仓库 ID。
- */
-function pickInitialRepositoryId(
-  repositories: RepositorySummary[],
-  settings: Settings,
-  preferredRepositoryId?: string,
-): string {
-  const ids = new Set(repositories.map((repository) => repository.id));
-  if (preferredRepositoryId && ids.has(preferredRepositoryId)) {
-    return preferredRepositoryId;
-  }
-
-  if (settings.uiPreferences.lastSelectedRepositoryId && ids.has(settings.uiPreferences.lastSelectedRepositoryId)) {
-    return settings.uiPreferences.lastSelectedRepositoryId;
-  }
-
-  return repositories[0]?.id ?? "";
-}
-
-/**
  * createDialogFromView 根据仓库视图生成创建弹窗默认值。
  */
 function createDialogFromView(view: RepositoryView): CreateDialogState {
@@ -337,6 +317,7 @@ function extractPathFromDroppedFiles(paths: string[]): string {
  * App 是 TreeShift 的主界面。
  */
 export default function App() {
+  const [page, setPage] = useState<AppPage>("workspace");
   const [environment, setEnvironment] = useState<EnvironmentStatus | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [repositories, setRepositories] = useState<RepositorySummary[]>([]);
@@ -348,9 +329,6 @@ export default function App() {
   const [createDialog, setCreateDialog] = useState<CreateDialogState>(emptyCreateDialogState());
   const [attachDialog, setAttachDialog] = useState<AttachDialogState>(emptyAttachDialogState());
   const [removeDialog, setRemoveDialog] = useState<RemoveDialogState>(emptyRemoveDialogState());
-  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsBusy, setSettingsBusy] = useState(false);
 
   useEffect(() => {
     void reloadWorkspace();
@@ -380,6 +358,11 @@ export default function App() {
         return;
       }
 
+      if (page === "settings") {
+        setNotice({ tone: "warning", message: "设置页打开时暂不支持拖拽绑定，请先返回工作区后再绑定仓库。" });
+        return;
+      }
+
       setBindDialog((current) => ({
         ...current,
         open: true,
@@ -393,7 +376,7 @@ export default function App() {
         runtimeBridge.runtime.OnFileDropOff();
       }
     };
-  }, []);
+  }, [page]);
 
   /**
    * 顶部提示条在展示 5 秒后自动消失。
@@ -415,28 +398,65 @@ export default function App() {
     };
   }, [notice]);
 
+  /**
+   * applyLocalSettingsSnapshot 仅根据最新设置更新本地可见状态。
+   *
+   * 当设置持久化已经成功、但后续全量刷新失败时，
+   * 该方法用于先把前端收敛到“不误报失败、也不继续展示明显过期配置”的状态。
+   *
+   * @param nextSettings 最新设置。
+   * @param preferredRepositoryId 希望尽量保留的仓库 ID。
+   * @returns 本次推导得到的本地工作区快照。
+   */
+  function applyLocalSettingsSnapshot(nextSettings: Settings, preferredRepositoryId?: string) {
+    const snapshot = deriveWorkspaceSnapshotFromSettings({
+      currentRepositories: repositories,
+      currentRepositoryView: repositoryView,
+      nextSettings,
+      preferredRepositoryId,
+    });
+
+    setSettings(snapshot.settings);
+    setRepositories(snapshot.repositories);
+    setActiveRepositoryId(snapshot.activeRepositoryId);
+    setRepositoryView(snapshot.repositoryView);
+
+    return snapshot;
+  }
+
+  /**
+   * syncWorkspace 从后端重新同步环境、配置、仓库列表与当前仓库视图。
+   *
+   * 该方法会返回最新配置，便于设置页在保存或解绑后立即重置本地草稿。
+   *
+   * @param preferredRepositoryId 优先选中的仓库 ID，可用于保持当前视图稳定。
+   * @returns 本次同步后最新的设置对象。
+   */
+  async function syncWorkspace(preferredRepositoryId?: string): Promise<Settings> {
+    const [nextEnvironment, nextSettings, nextRepositories] = await Promise.all([
+      backend.checkEnvironment(),
+      backend.getSettings(),
+      backend.listRepositories(),
+    ]);
+    const nextActiveRepositoryId = pickActiveRepositoryId(nextRepositories, nextSettings, preferredRepositoryId);
+    const nextRepositoryView = nextActiveRepositoryId
+      ? await backend.getWorktrees(nextActiveRepositoryId)
+      : null;
+
+    setEnvironment(nextEnvironment);
+    setSettings(nextSettings);
+    setRepositories(nextRepositories);
+    setActiveRepositoryId(nextActiveRepositoryId);
+    setRepositoryView(nextRepositoryView);
+
+    return nextSettings;
+  }
+
   async function reloadWorkspace(preferredRepositoryId?: string) {
     setLoadingMessage("正在同步仓库状态…");
 
     try {
-      const [nextEnvironment, nextSettings, nextRepositories] = await Promise.all([
-        backend.checkEnvironment(),
-        backend.getSettings(),
-        backend.listRepositories(),
-      ]);
-
-      const nextActiveRepositoryId = pickInitialRepositoryId(nextRepositories, nextSettings, preferredRepositoryId);
-
-      setEnvironment(nextEnvironment);
-      setSettings(nextSettings);
-      setRepositories(nextRepositories);
-      setActiveRepositoryId(nextActiveRepositoryId);
-
-      if (nextActiveRepositoryId) {
-        setRepositoryView(await backend.getWorktrees(nextActiveRepositoryId));
-      } else {
-        setRepositoryView(null);
-      }
+      await syncWorkspace(preferredRepositoryId);
     } catch (error) {
       setNotice({ tone: "error", message: toErrorMessage(error) });
     } finally {
@@ -831,129 +851,90 @@ export default function App() {
   }
 
   /**
-   * openSettingsDialog 打开设置弹窗。
+   * openSettingsPage 切换到独立设置页。
    */
-  function openSettingsDialog() {
+  function openSettingsPage() {
     if (!settings) {
       return;
     }
 
-    setSettingsDraft(toSettingsDraft(settings));
-    setSettingsOpen(true);
+    setPage("settings");
   }
 
   /**
-   * handleBrowseForGlobalDefaultRoot 选择全局默认输出路径。
+   * handleSettingsPageSave 持久化设置页提交的完整配置。
+   *
+   * @param nextSettings 设置页整理后的完整配置。
+   * @returns 后端归一化后的最新配置，用于重置设置页草稿。
    */
-  async function handleBrowseForGlobalDefaultRoot() {
-    if (!settingsDraft) {
-      return;
-    }
-
+  async function handleSettingsPageSave(nextSettings: Settings): Promise<Settings> {
     try {
-      const selectedPath = await backend.chooseDirectory({
-        title: "选择全局默认 Worktree 根目录",
-        defaultPath: settingsDraft.defaultWorktreeRoot,
+      let refreshError: unknown = null;
+      const savedSettings = await runWithLoading("正在保存设置…", async () => {
+        const persistedSettings = await backend.saveSettings(nextSettings);
+        const snapshot = applyLocalSettingsSnapshot(persistedSettings, activeRepositoryId);
+
+        try {
+          await syncWorkspace(snapshot.activeRepositoryId || undefined);
+        } catch (error) {
+          refreshError = error;
+        }
+
+        return persistedSettings;
       });
 
-      if (selectedPath) {
-        setSettingsDraft((current) =>
-          current
-            ? {
-                ...current,
-                defaultWorktreeRoot: selectedPath,
-              }
-            : current,
-        );
+      if (refreshError) {
+        setNotice({ tone: "warning", message: `设置已保存，但工作区刷新失败：${toErrorMessage(refreshError)}` });
+      } else {
+        setNotice({ tone: "success", message: "设置已保存。" });
       }
+
+      return savedSettings;
     } catch (error) {
       setNotice({ tone: "error", message: toErrorMessage(error) });
+      throw error;
     }
   }
 
   /**
-   * handleBrowseForRepositoryRoot 选择单仓库默认输出路径。
+   * handleSettingsPageUnbindRepository 解除指定仓库绑定并返回最新设置。
+   *
+   * @param repositoryId 需要解绑的仓库 ID。
+   * @param displayName 用于提示文案的仓库显示名。
+   * @returns 解绑成功后的最新设置；若用户取消则返回 null。
    */
-  async function handleBrowseForRepositoryRoot(repositoryId: string, defaultPath: string) {
-    try {
-      const selectedPath = await backend.chooseDirectory({
-        title: "选择仓库默认 Worktree 根目录",
-        defaultPath,
-      });
-
-      if (selectedPath) {
-        setSettingsDraft((current) => {
-          if (!current) {
-            return current;
-          }
-
-          return {
-            ...current,
-            repositories: current.repositories.map((repository) =>
-              repository.id === repositoryId
-                ? {
-                    ...repository,
-                    defaultWorktreeRoot: selectedPath,
-                  }
-                : repository,
-            ),
-          };
-        });
-      }
-    } catch (error) {
-      setNotice({ tone: "error", message: toErrorMessage(error) });
-    }
-  }
-
-  /**
-   * handleSaveSettings 持久化设置草稿。
-   */
-  async function handleSaveSettings() {
-    if (!settingsDraft) {
-      return;
-    }
-
-    setSettingsBusy(true);
-    try {
-      const normalizedDraft: SettingsDraft = {
-        ...settingsDraft,
-        repositories: settingsDraft.repositories.map((repository) => ensureRepositoryDisplayName(repository)),
-      };
-
-      const savedSettings = await runWithLoading("正在保存设置…", () =>
-        backend.saveSettings(fromSettingsDraft(normalizedDraft)),
-      );
-      setSettings(savedSettings);
-      setSettingsOpen(false);
-      setSettingsDraft(null);
-      setNotice({ tone: "success", message: "设置已保存。" });
-      await reloadWorkspace(activeRepositoryId);
-    } catch (error) {
-      setNotice({ tone: "error", message: toErrorMessage(error) });
-    } finally {
-      setSettingsBusy(false);
-    }
-  }
-
-  /**
-   * handleUnbindRepository 解除绑定指定仓库。
-   */
-  async function handleUnbindRepository(repositoryId: string, displayName: string) {
+  async function handleSettingsPageUnbindRepository(repositoryId: string, displayName: string): Promise<Settings | null> {
     const accepted = window.confirm(`确定要解除绑定仓库“${displayName}”吗？这不会删除任何文件。`);
     if (!accepted) {
-      return;
+      return null;
     }
 
     try {
-      await runWithLoading("正在解除绑定…", () => backend.unbindRepository(repositoryId));
-      setNotice({ tone: "success", message: `已解除绑定：${displayName}` });
-      await reloadWorkspace();
+      let refreshError: unknown = null;
+      const refreshedSettings = await runWithLoading("正在解除绑定…", async () => {
+        await backend.unbindRepository(repositoryId);
+        const nextSettings = await backend.getSettings();
+        const snapshot = applyLocalSettingsSnapshot(nextSettings, activeRepositoryId);
 
-      const refreshedSettings = await backend.getSettings();
-      setSettings(refreshedSettings);
-      setSettingsDraft(toSettingsDraft(refreshedSettings));
+        try {
+          await syncWorkspace(snapshot.activeRepositoryId || undefined);
+        } catch (error) {
+          refreshError = error;
+        }
+
+        return nextSettings;
+      });
+
+      if (refreshError) {
+        setNotice({ tone: "warning", message: `已解除绑定：${displayName}，但工作区刷新失败：${toErrorMessage(refreshError)}` });
+      } else {
+        setNotice({ tone: "success", message: `已解除绑定：${displayName}` });
+      }
+
+      return refreshedSettings;
     } catch (error) {
       setNotice({ tone: "error", message: toErrorMessage(error) });
+      throw error;
     }
   }
 
@@ -965,6 +946,10 @@ export default function App() {
     ? attachDialog.newBranchName.trim() !== ""
     : attachDialog.existingBranch.trim() !== "";
   const hasAttachableExistingBranch = attachBranchOptions.some((option) => !option.disabled);
+  const mainBaseClassName = "relative mx-auto flex h-full min-h-0 max-w-[1560px] flex-col gap-3 px-3 py-3 md:px-5";
+  const mainClassName = page === "settings"
+    ? `${mainBaseClassName} overflow-hidden`
+    : `no-scrollbar ${mainBaseClassName} overflow-y-auto`;
 
   return (
     <div className="relative h-screen overflow-hidden">
@@ -982,7 +967,7 @@ export default function App() {
         </div>
       ) : null}
 
-      <main className="no-scrollbar relative mx-auto flex h-screen max-w-[1560px] flex-col gap-3 overflow-y-auto px-3 py-3 md:px-5">
+      <main className={mainClassName}>
         <EnvironmentStrip environment={environment} />
 
         {notice ? (
@@ -1004,6 +989,16 @@ export default function App() {
           </section>
         ) : null}
 
+        {page === "settings" && settings ? (
+          <SettingsPage
+            onBack={() => setPage("workspace")}
+            onNotice={(tone, message) => setNotice({ tone, message })}
+            onSave={handleSettingsPageSave}
+            onUnbindRepository={handleSettingsPageUnbindRepository}
+            settings={settings}
+          />
+        ) : (
+          <>
         <section className="glass-panel px-3 py-2.5">
           <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto whitespace-nowrap">
             <label className="shrink-0 text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">当前仓库</label>
@@ -1025,7 +1020,7 @@ export default function App() {
             <button className="primary-button shrink-0 px-2.5 py-1 text-xs" disabled={!repositoryView} onClick={openCreateDialog} type="button">
               新建
             </button>
-            <button className="ghost-button shrink-0 px-2.5 py-1 text-xs" onClick={openSettingsDialog} type="button">
+            <button className="ghost-button shrink-0 px-2.5 py-1 text-xs" onClick={openSettingsPage} type="button">
               设置
             </button>
           </div>
@@ -1079,6 +1074,8 @@ export default function App() {
               ))}
             </div>
           </section>
+        )}
+          </>
         )}
       </main>
 
@@ -1397,389 +1394,6 @@ export default function App() {
         </div>
       </Modal>
 
-      <Modal
-        bodyClassName="no-scrollbar px-8 py-4"
-        closeButtonClassName="shrink-0 px-3 py-2"
-        description="统一管理默认路径和外部工具"
-        descriptionClassName="max-w-none whitespace-nowrap text-[13px] leading-5"
-        footer={
-          <div className="flex flex-wrap justify-end gap-3">
-            <button
-              className="ghost-button px-5 py-2.5 text-xs"
-              onClick={() => {
-                setSettingsOpen(false);
-                setSettingsDraft(null);
-              }}
-              type="button"
-            >
-              取消
-            </button>
-            <button
-              className="primary-button px-5 py-2.5 text-xs"
-              disabled={settingsBusy || !settingsDraft}
-              onClick={() => void handleSaveSettings()}
-              type="button"
-            >
-              {settingsBusy ? "保存中…" : "保存设置"}
-            </button>
-          </div>
-        }
-        footerClassName="px-8 py-4"
-        headerClassName="px-8 py-5"
-        headerContentClassName="space-y-1.5"
-        onClose={() => {
-          setSettingsOpen(false);
-          setSettingsDraft(null);
-        }}
-        open={settingsOpen}
-        panelClassName="max-w-[720px]"
-        title="设置"
-        titleClassName="leading-none"
-      >
-        {settingsDraft ? (
-          <div className="space-y-6">
-            <section className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="font-display text-lg font-semibold text-stone-900">默认路径</h3>
-                  <p className="text-sm text-stone-600">未为仓库单独配置时，新建 Worktree 会优先使用这里的根目录。</p>
-                </div>
-                <button className="ghost-button px-3 py-1.5 text-xs" onClick={() => void handleBrowseForGlobalDefaultRoot()} type="button">
-                  浏览目录
-                </button>
-              </div>
-              <input
-                className="field-shell w-full"
-                onChange={(event) =>
-                  setSettingsDraft((current) =>
-                    current
-                      ? {
-                          ...current,
-                          defaultWorktreeRoot: event.target.value,
-                        }
-                      : current,
-                  )
-                }
-                placeholder="例如：D:\Worktrees"
-                value={settingsDraft.defaultWorktreeRoot}
-              />
-            </section>
-
-            <section className="space-y-3">
-              <div>
-                <h3 className="font-display text-lg font-semibold text-stone-900">启动脚本</h3>
-                <p className="text-sm text-stone-600">
-                  可选。使用 PowerShell 脚本在打开终端或启动外部 CLI 前预先设置代理、环境变量等上下文。
-                </p>
-              </div>
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-stone-700">PowerShell 脚本</span>
-                <textarea
-                  className="field-shell min-h-[140px] w-full resize-y font-mono text-[12px]"
-                  onChange={(event) =>
-                    setSettingsDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            launchScript: {
-                              ...current.launchScript,
-                              powerShellScript: event.target.value,
-                            },
-                          }
-                        : current,
-                    )
-                  }
-                  placeholder={'$env:HTTP_PROXY="http://127.0.0.1:6789"\n$env:HTTPS_PROXY="http://127.0.0.1:6789"'}
-                  value={settingsDraft.launchScript.powerShellScript}
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 rounded-[18px] border border-stone-200/80 bg-white/75 px-3 py-2">
-                  <input
-                    checked={settingsDraft.launchScript.applyToTerminal}
-                    onChange={(event) =>
-                      setSettingsDraft((current) =>
-                        current
-                          ? {
-                              ...current,
-                              launchScript: {
-                                ...current.launchScript,
-                                applyToTerminal: event.target.checked,
-                              },
-                            }
-                          : current,
-                      )
-                    }
-                    type="checkbox"
-                  />
-                  <span className="text-xs font-medium text-stone-700">用于打开终端</span>
-                </label>
-                <label className="flex items-center gap-2 rounded-[18px] border border-stone-200/80 bg-white/75 px-3 py-2">
-                  <input
-                    checked={settingsDraft.launchScript.applyToExternalTools}
-                    onChange={(event) =>
-                      setSettingsDraft((current) =>
-                        current
-                          ? {
-                              ...current,
-                              launchScript: {
-                                ...current.launchScript,
-                                applyToExternalTools: event.target.checked,
-                              },
-                            }
-                          : current,
-                      )
-                    }
-                    type="checkbox"
-                  />
-                  <span className="text-xs font-medium text-stone-700">用于启动外部 CLI</span>
-                </label>
-              </div>
-              <div className="space-y-1 rounded-[18px] border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-900">
-                <p>启用“用于打开终端”后，该入口会固定使用 PowerShell，而不是 Windows Terminal 的默认 Profile。</p>
-                <p>启用“用于启动外部 CLI”后，会先执行这段脚本，脚本报错或返回非零退出码时不会继续启动 CLI。</p>
-              </div>
-            </section>
-
-            <section className="space-y-3">
-              <div>
-                <h3 className="font-display text-lg font-semibold text-stone-900">已绑定仓库</h3>
-                <p className="text-sm text-stone-600">可以调整展示名称、单仓库默认输出路径，或解除绑定。</p>
-              </div>
-              <div className="space-y-3">
-                {settingsDraft.repositories.map((repository) => (
-                  <article key={repository.id} className="rounded-[20px] border border-stone-200/80 bg-stone-50/85 px-4 py-4">
-                    <div className="space-y-3">
-                      <label className="space-y-2">
-                        <span className="text-sm font-medium text-stone-700">显示名称</span>
-                        <input
-                          className="field-shell w-full"
-                          onChange={(event) =>
-                            setSettingsDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    repositories: current.repositories.map((item) =>
-                                      item.id === repository.id
-                                        ? {
-                                            ...item,
-                                            displayName: event.target.value,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : current,
-                            )
-                          }
-                          value={repository.displayName}
-                        />
-                      </label>
-
-                      <label className="space-y-2">
-                        <span className="text-sm font-medium text-stone-700">仓库默认 Worktree 根目录</span>
-                        <input
-                          className="field-shell w-full"
-                          onChange={(event) =>
-                            setSettingsDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    repositories: current.repositories.map((item) =>
-                                      item.id === repository.id
-                                        ? {
-                                            ...item,
-                                            defaultWorktreeRoot: event.target.value,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : current,
-                            )
-                          }
-                          placeholder="留空则回退到全局默认路径"
-                          value={repository.defaultWorktreeRoot}
-                        />
-                        <p className="break-all text-xs text-stone-500">主工作区：{repository.mainWorktreePath}</p>
-                      </label>
-
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          className="ghost-button px-3 py-1.5 text-xs"
-                          onClick={() => void handleBrowseForRepositoryRoot(repository.id, repository.defaultWorktreeRoot)}
-                          type="button"
-                        >
-                          浏览目录
-                        </button>
-                        <button
-                          className="ghost-button border-rose-300/80 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-400 hover:bg-rose-50 hover:text-rose-800"
-                          onClick={() => void handleUnbindRepository(repository.id, repository.displayName)}
-                          type="button"
-                        >
-                          解除绑定
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-
-            <section className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="font-display text-lg font-semibold text-stone-900">外部工具</h3>
-                  <p className="text-sm text-stone-600">支持通用 CLI。每一行参数会作为独立参数传给命令本体。</p>
-                </div>
-                <button
-                  className="ghost-button px-3 py-1.5 text-xs"
-                  onClick={() =>
-                    setSettingsDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            externalTools: [...current.externalTools, createEmptyToolDraft()],
-                          }
-                        : current,
-                    )
-                  }
-                  type="button"
-                >
-                  添加工具
-                </button>
-              </div>
-              <div className="space-y-3">
-                {settingsDraft.externalTools.map((tool) => (
-                  <article key={tool.id} className="rounded-[20px] border border-stone-200/80 bg-stone-50/85 px-4 py-4">
-                    <div className="space-y-3">
-                      <label className="space-y-2">
-                        <span className="text-sm font-medium text-stone-700">工具名称</span>
-                        <input
-                          className="field-shell w-full"
-                          onChange={(event) =>
-                            setSettingsDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    externalTools: current.externalTools.map((item) =>
-                                      item.id === tool.id
-                                        ? {
-                                            ...item,
-                                            name: event.target.value,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : current,
-                            )
-                          }
-                          placeholder="例如：Codex CLI"
-                          value={tool.name}
-                        />
-                      </label>
-
-                      <label className="space-y-2">
-                        <span className="text-sm font-medium text-stone-700">命令</span>
-                        <input
-                          className="field-shell w-full"
-                          onChange={(event) =>
-                            setSettingsDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    externalTools: current.externalTools.map((item) =>
-                                      item.id === tool.id
-                                        ? {
-                                            ...item,
-                                            command: event.target.value,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : current,
-                            )
-                          }
-                          placeholder="例如：codex 或 C:\Tools\codex.exe"
-                          value={tool.command}
-                        />
-                      </label>
-
-                      <label className="space-y-2">
-                        <span className="text-sm font-medium text-stone-700">参数（每行一个）</span>
-                        <textarea
-                          className="field-shell min-h-[120px] w-full resize-y"
-                          onChange={(event) =>
-                            setSettingsDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    externalTools: current.externalTools.map((item) =>
-                                      item.id === tool.id
-                                        ? {
-                                            ...item,
-                                            argsText: event.target.value,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : current,
-                            )
-                          }
-                          placeholder={"例如：\n--model\ngpt-5\n--cwd\n{path}"}
-                          value={tool.argsText}
-                        />
-                      </label>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <label className="flex items-center gap-2 rounded-[18px] border border-stone-200/80 bg-white/75 px-3 py-2">
-                          <input
-                            checked={tool.enabled}
-                            onChange={(event) =>
-                              setSettingsDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      externalTools: current.externalTools.map((item) =>
-                                        item.id === tool.id
-                                          ? {
-                                              ...item,
-                                              enabled: event.target.checked,
-                                            }
-                                          : item,
-                                      ),
-                                    }
-                                  : current,
-                              )
-                            }
-                            type="checkbox"
-                          />
-                          <span className="text-xs font-medium text-stone-700">启用</span>
-                        </label>
-
-                        <button
-                          className="ghost-button border-rose-300/80 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-400 hover:bg-rose-50 hover:text-rose-800"
-                          onClick={() =>
-                            setSettingsDraft((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    externalTools: current.externalTools.filter((item) => item.id !== tool.id),
-                                  }
-                                : current,
-                            )
-                          }
-                          type="button"
-                        >
-                          移除工具
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          </div>
-        ) : null}
-      </Modal>
     </div>
   );
 }
