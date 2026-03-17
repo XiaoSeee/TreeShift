@@ -20,6 +20,9 @@ func TestDefaultSettingsPresetsCodexTool(t *testing.T) {
 	if settings.ExternalTools[0].ID != "tool-codex" {
 		t.Fatalf("默认工具未保留 Codex 预设：%v", settings.ExternalTools)
 	}
+	if settings.LaunchScript.PowerShellScript != "" {
+		t.Fatalf("默认启动脚本应为空：%q", settings.LaunchScript.PowerShellScript)
+	}
 }
 
 // TestSaveAndLoadSettings 验证配置文件可以成功落盘并被完整回读。
@@ -48,6 +51,11 @@ func TestSaveAndLoadSettings(t *testing.T) {
 				Args:    []string{"--model", "gpt-5"},
 				Enabled: true,
 			},
+		},
+		LaunchScript: model.LaunchScriptSettings{
+			PowerShellScript:     `$env:HTTP_PROXY="http://127.0.0.1:6789"`,
+			ApplyToTerminal:      true,
+			ApplyToExternalTools: true,
 		},
 		PendingCleanups: []model.PendingCleanup{
 			{
@@ -79,6 +87,9 @@ func TestSaveAndLoadSettings(t *testing.T) {
 	if len(loaded.PendingCleanups) != 1 || loaded.PendingCleanups[0].Path != settings.PendingCleanups[0].Path {
 		t.Fatalf("待清理项目未被完整回读：%v", loaded.PendingCleanups)
 	}
+	if loaded.LaunchScript != settings.LaunchScript {
+		t.Fatalf("启动脚本配置未被完整回读：got=%+v want=%+v", loaded.LaunchScript, settings.LaunchScript)
+	}
 
 	if _, err := os.Stat(filepath.Join(tempDir, "config.json")); err != nil {
 		t.Fatalf("配置文件未落盘：%v", err)
@@ -100,6 +111,11 @@ func TestNormalizeSettings(t *testing.T) {
 				Name:    "Codex CLI",
 				Command: "codex",
 			},
+		},
+		LaunchScript: model.LaunchScriptSettings{
+			PowerShellScript:     "  $env:HTTP_PROXY='http://127.0.0.1:6789'  ",
+			ApplyToTerminal:      true,
+			ApplyToExternalTools: true,
 		},
 		PendingCleanups: []model.PendingCleanup{
 			{
@@ -135,5 +151,9 @@ func TestNormalizeSettings(t *testing.T) {
 
 	if normalized.PendingCleanups[0].Path != `D:\Code\demo\_worktrees\feature-a` {
 		t.Fatalf("待清理路径未被清洗：%s", normalized.PendingCleanups[0].Path)
+	}
+
+	if normalized.LaunchScript.PowerShellScript != `$env:HTTP_PROXY='http://127.0.0.1:6789'` {
+		t.Fatalf("启动脚本文本未被清洗：%q", normalized.LaunchScript.PowerShellScript)
 	}
 }

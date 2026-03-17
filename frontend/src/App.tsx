@@ -1432,7 +1432,7 @@ export default function App() {
           setSettingsDraft(null);
         }}
         open={settingsOpen}
-        panelClassName="max-w-[620px]"
+        panelClassName="max-w-[720px]"
         title="设置"
         titleClassName="leading-none"
       >
@@ -1463,6 +1463,82 @@ export default function App() {
                 placeholder="例如：D:\Worktrees"
                 value={settingsDraft.defaultWorktreeRoot}
               />
+            </section>
+
+            <section className="space-y-3">
+              <div>
+                <h3 className="font-display text-lg font-semibold text-stone-900">启动脚本</h3>
+                <p className="text-sm text-stone-600">
+                  可选。使用 PowerShell 脚本在打开终端或启动外部 CLI 前预先设置代理、环境变量等上下文。
+                </p>
+              </div>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">PowerShell 脚本</span>
+                <textarea
+                  className="field-shell min-h-[140px] w-full resize-y font-mono text-[12px]"
+                  onChange={(event) =>
+                    setSettingsDraft((current) =>
+                      current
+                        ? {
+                            ...current,
+                            launchScript: {
+                              ...current.launchScript,
+                              powerShellScript: event.target.value,
+                            },
+                          }
+                        : current,
+                    )
+                  }
+                  placeholder={'$env:HTTP_PROXY="http://127.0.0.1:6789"\n$env:HTTPS_PROXY="http://127.0.0.1:6789"'}
+                  value={settingsDraft.launchScript.powerShellScript}
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 rounded-[18px] border border-stone-200/80 bg-white/75 px-3 py-2">
+                  <input
+                    checked={settingsDraft.launchScript.applyToTerminal}
+                    onChange={(event) =>
+                      setSettingsDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              launchScript: {
+                                ...current.launchScript,
+                                applyToTerminal: event.target.checked,
+                              },
+                            }
+                          : current,
+                      )
+                    }
+                    type="checkbox"
+                  />
+                  <span className="text-xs font-medium text-stone-700">用于打开终端</span>
+                </label>
+                <label className="flex items-center gap-2 rounded-[18px] border border-stone-200/80 bg-white/75 px-3 py-2">
+                  <input
+                    checked={settingsDraft.launchScript.applyToExternalTools}
+                    onChange={(event) =>
+                      setSettingsDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              launchScript: {
+                                ...current.launchScript,
+                                applyToExternalTools: event.target.checked,
+                              },
+                            }
+                          : current,
+                      )
+                    }
+                    type="checkbox"
+                  />
+                  <span className="text-xs font-medium text-stone-700">用于启动外部 CLI</span>
+                </label>
+              </div>
+              <div className="space-y-1 rounded-[18px] border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-xs leading-5 text-amber-900">
+                <p>启用“用于打开终端”后，该入口会固定使用 PowerShell，而不是 Windows Terminal 的默认 Profile。</p>
+                <p>启用“用于启动外部 CLI”后，会先执行这段脚本，脚本报错或返回非零退出码时不会继续启动 CLI。</p>
+              </div>
             </section>
 
             <section className="space-y-3">

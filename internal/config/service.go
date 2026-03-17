@@ -104,6 +104,7 @@ func DefaultSettings() model.Settings {
 		SchemaVersion:       model.SettingsSchemaVersion,
 		Repositories:        []model.RepositoryBinding{},
 		DefaultWorktreeRoot: "",
+		LaunchScript:        model.LaunchScriptSettings{},
 		PendingCleanups:     []model.PendingCleanup{},
 		ExternalTools: []model.ExternalTool{
 			{
@@ -134,6 +135,7 @@ func NormalizeSettings(settings model.Settings) model.Settings {
 	if normalized.ExternalTools == nil {
 		normalized.ExternalTools = []model.ExternalTool{}
 	}
+	normalized.LaunchScript.PowerShellScript = strings.TrimSpace(normalized.LaunchScript.PowerShellScript)
 
 	for index := range normalized.Repositories {
 		repository := normalized.Repositories[index]

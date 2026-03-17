@@ -27,23 +27,24 @@ func (s *Service) OpenExplorer(path string) error {
 
 // OpenTerminal 在 Windows Terminal 中打开指定目录。
 //
-// 在 Windows 平台上，该方法会默认通过管理员权限启动终端，
-// 以匹配用户习惯的管理员工作流；其他平台则退回到普通启动。
-func (s *Service) OpenTerminal(path string) error {
+// 在 Windows 平台上，该方法会默认通过管理员权限启动终端；
+// 当设置启用了启动脚本时，会固定改为 PowerShell 承载该入口，
+// 以确保用户配置的 PowerShell 脚本能在目标目录中稳定执行。
+func (s *Service) OpenTerminal(path string, launchScript model.LaunchScriptSettings) error {
 	cleanPath := filepath.Clean(path)
-	return openTerminalWithPreferredPrivileges(cleanPath)
+	return openTerminalWithPreferredPrivileges(cleanPath, launchScript)
 }
 
 // LaunchExternalTool 在目标 worktree 目录下启动外部 CLI。
 //
 // 参数数组中的 {path} 和 {branch} 占位符会在真正启动前替换为实际值。
-func (s *Service) LaunchExternalTool(tool model.ExternalTool, worktreePath string, branch string) error {
+func (s *Service) LaunchExternalTool(tool model.ExternalTool, worktreePath string, branch string, launchScript model.LaunchScriptSettings) error {
 	if strings.TrimSpace(tool.Command) == "" {
 		return fmt.Errorf("工具 %s 的命令路径为空", tool.Name)
 	}
 
 	resolvedArgs := buildExternalToolArgs(tool.Args, worktreePath, branch)
-	return launchExternalToolWithPreferredPrivileges(tool.Command, resolvedArgs, filepath.Clean(worktreePath))
+	return launchExternalToolWithPreferredPrivileges(tool.Command, resolvedArgs, filepath.Clean(worktreePath), launchScript)
 }
 
 // buildExternalToolArgs 负责替换外部工具参数中的上下文占位符。

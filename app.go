@@ -463,7 +463,11 @@ func (a *App) OpenInTerminal(path string) error {
 		return errors.New("目录路径不能为空")
 	}
 
-	return a.launcherService.OpenTerminal(path)
+	a.mu.Lock()
+	launchScript := a.settings.LaunchScript
+	a.mu.Unlock()
+
+	return a.launcherService.OpenTerminal(path, launchScript)
 }
 
 // LaunchTool 在指定 worktree 目录下启动外部 AI CLI 工具。
@@ -473,7 +477,7 @@ func (a *App) LaunchTool(request model.LaunchToolRequest) error {
 
 	for _, tool := range a.settings.ExternalTools {
 		if tool.ID == request.ToolID {
-			return a.launcherService.LaunchExternalTool(tool, request.WorktreePath, request.Branch)
+			return a.launcherService.LaunchExternalTool(tool, request.WorktreePath, request.Branch, a.settings.LaunchScript)
 		}
 	}
 

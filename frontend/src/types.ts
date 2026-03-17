@@ -30,6 +30,15 @@ export interface ExternalTool {
 }
 
 /**
+ * LaunchScriptSettings 描述启动终端或外部 CLI 前执行的 PowerShell 脚本配置。
+ */
+export interface LaunchScriptSettings {
+  powerShellScript: string;
+  applyToTerminal: boolean;
+  applyToExternalTools: boolean;
+}
+
+/**
  * RepositoryBinding 描述一个已绑定仓库的配置记录。
  */
 export interface RepositoryBinding {
@@ -56,6 +65,7 @@ export interface Settings {
   repositories: RepositoryBinding[];
   defaultWorktreeRoot: string;
   externalTools: ExternalTool[];
+  launchScript: LaunchScriptSettings;
   pendingCleanups: PendingCleanup[];
   uiPreferences: UIPreferences;
 }

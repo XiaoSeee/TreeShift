@@ -1,7 +1,7 @@
 package model
 
 // SettingsSchemaVersion 定义配置文件结构版本。
-const SettingsSchemaVersion = 2
+const SettingsSchemaVersion = 3
 
 // Worktree 状态常量用于前端渲染标签和删除重试逻辑。
 const (
@@ -50,6 +50,17 @@ type ExternalTool struct {
 	Enabled bool     `json:"enabled"`
 }
 
+// LaunchScriptSettings 描述启动终端或外部 CLI 前要执行的 PowerShell 脚本配置。
+//
+// PowerShellScript 保存用户在设置页中录入的原始脚本文本；
+// ApplyToTerminal 与 ApplyToExternalTools 分别控制该脚本是否作用于“打开终端”
+// 和“启动外部 CLI”两个入口。
+type LaunchScriptSettings struct {
+	PowerShellScript     string `json:"powerShellScript"`
+	ApplyToTerminal      bool   `json:"applyToTerminal"`
+	ApplyToExternalTools bool   `json:"applyToExternalTools"`
+}
+
 // RepositoryBinding 描述一个已绑定 Git 仓库的持久化记录。
 //
 // CommonDir 用于仓库去重，MainWorktreePath 用于后续 Git 命令执行。
@@ -71,12 +82,13 @@ type UIPreferences struct {
 //
 // 该结构会以 JSON 形式持久化到可执行文件同级目录。
 type Settings struct {
-	SchemaVersion       int                 `json:"schemaVersion"`
-	Repositories        []RepositoryBinding `json:"repositories"`
-	DefaultWorktreeRoot string              `json:"defaultWorktreeRoot"`
-	ExternalTools       []ExternalTool      `json:"externalTools"`
-	PendingCleanups     []PendingCleanup    `json:"pendingCleanups"`
-	UIPreferences       UIPreferences       `json:"uiPreferences"`
+	SchemaVersion       int                  `json:"schemaVersion"`
+	Repositories        []RepositoryBinding  `json:"repositories"`
+	DefaultWorktreeRoot string               `json:"defaultWorktreeRoot"`
+	ExternalTools       []ExternalTool       `json:"externalTools"`
+	LaunchScript        LaunchScriptSettings `json:"launchScript"`
+	PendingCleanups     []PendingCleanup     `json:"pendingCleanups"`
+	UIPreferences       UIPreferences        `json:"uiPreferences"`
 }
 
 // RepositorySummary 是仓库切换器所需的摘要信息。

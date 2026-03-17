@@ -1,12 +1,8 @@
-import {
-  argsToText,
-  buildSuggestedPath,
-  sanitizePathSegment,
-  textToArgs,
-} from "./formats";
+import { fromSettingsDraft, argsToText, buildSuggestedPath, sanitizePathSegment, textToArgs, toSettingsDraft } from "./formats";
+import type { Settings } from "../types";
 
 /**
- * describe 路径与参数格式工具测试。
+ * describe 用于覆盖设置草稿和路径格式化相关的工具函数。
  */
 describe("formats", () => {
   /**
@@ -30,5 +26,42 @@ describe("formats", () => {
     const rawText = "--model\n gpt-5 \n\n--approval-mode\nnever";
     expect(textToArgs(rawText)).toEqual(["--model", "gpt-5", "--approval-mode", "never"]);
     expect(argsToText(["--model", "gpt-5"])).toBe("--model\ngpt-5");
+  });
+
+  /**
+   * it 应在设置与草稿之间保留启动脚本配置。
+   */
+  it("会在设置草稿转换中保留启动脚本配置", () => {
+    const settings: Settings = {
+      schemaVersion: 3,
+      repositories: [],
+      defaultWorktreeRoot: "D:\\Worktrees",
+      externalTools: [
+        {
+          id: "tool-codex",
+          name: "Codex CLI",
+          command: "codex",
+          args: ["--model", "gpt-5"],
+          enabled: true,
+        },
+      ],
+      launchScript: {
+        powerShellScript: '$env:HTTP_PROXY="http://127.0.0.1:6789"',
+        applyToTerminal: true,
+        applyToExternalTools: true,
+      },
+      pendingCleanups: [],
+      uiPreferences: {
+        lastSelectedRepositoryId: "",
+      },
+    };
+
+    const draft = toSettingsDraft(settings);
+    expect(draft.launchScript).toEqual(settings.launchScript);
+    expect(draft.externalTools[0].argsText).toBe("--model\ngpt-5");
+
+    const restored = fromSettingsDraft(draft);
+    expect(restored.launchScript).toEqual(settings.launchScript);
+    expect(restored.externalTools[0].args).toEqual(["--model", "gpt-5"]);
   });
 });

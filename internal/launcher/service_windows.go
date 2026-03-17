@@ -3,12 +3,16 @@
 package launcher
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
+
+	"treeshift/internal/model"
 )
 
 const (
@@ -34,10 +38,20 @@ func configureCommandForNewConsole(command *exec.Cmd) {
 
 // openTerminalWithPreferredPrivileges 以管理员权限启动 Windows Terminal。
 //
-// 该方法会优先尝试复用现有 Terminal 窗口；如果系统层面的启动调用失败，
-// 则退回到直接打开一个新窗口。提权过程中若系统开启了 UAC，仍会显示 UAC 确认框。
-func openTerminalWithPreferredPrivileges(path string) error {
+// 当未启用启动脚本时，仍沿用现有的默认 Profile 打开方式；
+// 当启用了“打开终端前执行脚本”后，会改为显式使用 PowerShell，
+// 并通过 EncodedCommand 安全承载用户脚本，避免分号被 wt.exe 误拆分。
+func openTerminalWithPreferredPrivileges(path string, launchScript model.LaunchScriptSettings) error {
 	cleanPath := filepath.Clean(path)
+	if shouldRunTerminalLaunchScript(launchScript) {
+		powerShellScript := buildTerminalStartupPowerShellScript(launchScript.PowerShellScript)
+		err := shellExecuteRunAs("wt.exe", buildPowerShellTerminalArgs(cleanPath, powerShellScript, true), cleanPath)
+		if err == nil {
+			return nil
+		}
+
+		return shellExecuteRunAs("wt.exe", buildPowerShellTerminalArgs(cleanPath, powerShellScript, false), cleanPath)
+	}
 
 	err := shellExecuteRunAs("wt.exe", []string{"-w", "0", "nt", "-d", cleanPath}, cleanPath)
 	if err == nil {
@@ -54,10 +68,23 @@ func openTerminalWithPreferredPrivileges(path string) error {
 // 1. 打开结果落在 Terminal 中，而不是回退到独立 conhost/cmd 窗口；
 // 2. 新标签页的工作目录固定为目标 worktree；
 // 3. CLI 退出后仍保留 PowerShell 会话，便于继续查看输出或补充命令。
-func launchExternalToolWithPreferredPrivileges(command string, args []string, workingDirectory string) error {
+//
+// 当设置启用了“启动外部 CLI 前执行脚本”时，用户脚本会先于 CLI 执行；
+// 若脚本执行失败或返回非零退出码，则当前终端会保留错误信息，但不会继续启动 CLI。
+func launchExternalToolWithPreferredPrivileges(command string, args []string, workingDirectory string, launchScript model.LaunchScriptSettings) error {
+	trimmedCommand := strings.TrimSpace(command)
+	if shouldRunExternalToolLaunchScript(launchScript) {
+		powerShellScript := buildExternalToolPowerShellScript(trimmedCommand, args, launchScript.PowerShellScript)
+		return shellExecuteRunAs(
+			"wt.exe",
+			buildPowerShellTerminalArgs(workingDirectory, powerShellScript, true),
+			workingDirectory,
+		)
+	}
+
 	return shellExecuteRunAs(
 		"wt.exe",
-		buildElevatedExternalToolTerminalArgs(workingDirectory, strings.TrimSpace(command), args),
+		buildElevatedExternalToolTerminalArgs(workingDirectory, trimmedCommand, args),
 		workingDirectory,
 	)
 }
@@ -123,6 +150,116 @@ func buildElevatedExternalToolTerminalArgs(workingDirectory string, command stri
 		"-NoExit",
 		powerShellCommandLine,
 	}
+}
+
+// buildPowerShellTerminalArgs 构造由 Windows Terminal 承载的 PowerShell 脚本启动参数。
+//
+// reuseWindow=true 时会优先复用最近使用的 Terminal 窗口；
+// reuseWindow=false 时会强制新建窗口，用于复用失败后的回退路径。
+func buildPowerShellTerminalArgs(workingDirectory string, powerShellScript string, reuseWindow bool) []string {
+	args := make([]string, 0, 10)
+	if reuseWindow {
+		args = append(args, "-w", "0")
+	}
+
+	args = append(args,
+		"nt",
+		"-d",
+		workingDirectory,
+		"powershell.exe",
+		"-NoExit",
+		"-EncodedCommand",
+		encodePowerShellScript(powerShellScript),
+	)
+	return args
+}
+
+// shouldRunTerminalLaunchScript 判断“打开终端”入口是否需要先执行启动脚本。
+//
+// 只有当脚本文本非空且启用了终端开关时，才会切换到 PowerShell 注入模式。
+func shouldRunTerminalLaunchScript(launchScript model.LaunchScriptSettings) bool {
+	return launchScript.ApplyToTerminal && strings.TrimSpace(launchScript.PowerShellScript) != ""
+}
+
+// shouldRunExternalToolLaunchScript 判断“启动外部 CLI”入口是否需要先执行启动脚本。
+//
+// 该判断会同时检查脚本文本与启用开关，避免空脚本误改变原有启动行为。
+func shouldRunExternalToolLaunchScript(launchScript model.LaunchScriptSettings) bool {
+	return launchScript.ApplyToExternalTools && strings.TrimSpace(launchScript.PowerShellScript) != ""
+}
+
+// buildTerminalStartupPowerShellScript 生成“打开终端”入口使用的 PowerShell 脚本。
+//
+// 这里会显式把 ErrorActionPreference 设为 Stop，确保脚本里的 PowerShell 错误
+// 能在当前终端中直接暴露出来，而不是被静默吞掉后继续执行后续语句。
+func buildTerminalStartupPowerShellScript(userScript string) string {
+	scriptLines := []string{
+		"$treeShiftOriginalErrorActionPreference = $ErrorActionPreference",
+		"try {",
+		"$ErrorActionPreference = 'Stop'",
+		strings.TrimSpace(userScript),
+		"} finally {",
+		"  $ErrorActionPreference = $treeShiftOriginalErrorActionPreference",
+		"}",
+	}
+	return strings.Join(scriptLines, "\n")
+}
+
+// buildExternalToolPowerShellScript 生成“外部 CLI”入口的完整 PowerShell 脚本。
+//
+// 脚本会先执行用户配置的启动脚本，再在同一终端中启动目标 CLI。
+// 若前置脚本失败，则直接 return，保留当前窗口供用户查看错误输出。
+func buildExternalToolPowerShellScript(command string, args []string, userScript string) string {
+	scriptLines := []string{
+		"$treeShiftOriginalErrorActionPreference = $ErrorActionPreference",
+		"try {",
+		"  $ErrorActionPreference = 'Stop'",
+		"  $global:LASTEXITCODE = 0",
+		indentPowerShellScript(strings.TrimSpace(userScript)),
+		"  if (-not $?) {",
+		"    Write-Error '启动前脚本执行失败，已取消后续 CLI 启动。'",
+		"    return",
+		"  }",
+		"  if ($LASTEXITCODE -ne 0) {",
+		"    Write-Error '启动前脚本返回非零退出码，已取消后续 CLI 启动。'",
+		"    return",
+		"  }",
+		"} finally {",
+		"  $ErrorActionPreference = $treeShiftOriginalErrorActionPreference",
+		"}",
+		buildPowerShellLaunchCommand(command, args),
+	}
+	return strings.Join(scriptLines, "\n")
+}
+
+// indentPowerShellScript 为多行 PowerShell 脚本统一补缩进。
+//
+// 该方法仅用于把用户脚本文本嵌入 try 代码块，避免多行脚本破坏生成结果的层级结构。
+func indentPowerShellScript(script string) string {
+	if script == "" {
+		return ""
+	}
+
+	lines := strings.Split(script, "\n")
+	for index := range lines {
+		lines[index] = "  " + lines[index]
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// encodePowerShellScript 按 PowerShell -EncodedCommand 的要求编码脚本。
+//
+// PowerShell 要求传入的内容是 UTF-16LE 字节序列的 Base64 字符串，
+// 这样可以避免多层命令行转义导致的引号、分号和换行问题。
+func encodePowerShellScript(script string) string {
+	utf16Values := utf16.Encode([]rune(script))
+	rawBytes := make([]byte, 0, len(utf16Values)*2)
+	for _, value := range utf16Values {
+		rawBytes = append(rawBytes, byte(value), byte(value>>8))
+	}
+
+	return base64.StdEncoding.EncodeToString(rawBytes)
 }
 
 // buildPowerShellLaunchCommand 生成传给 PowerShell 的单条命令字符串。
